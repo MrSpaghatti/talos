@@ -1,4 +1,4 @@
-import mercury_core/config
+import talos_core/config
 
 let cfg = loadConfig()
 echo "Provider: ", cfg.provider

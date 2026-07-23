@@ -37,6 +37,7 @@ from talos_core/agent_dispatcher import AgentDispatcher, AgentRequest,
 import dimscord
 
 import talos_core/agent_loop
+import talos_core/plan_executor
 import tools/shell
 import talos_agent/web_server
 import talos_agent/tui/chat_tui
@@ -311,12 +312,12 @@ proc makeDelegateExecuteProc*(): auto =
     # captures its own bounds rather than the parent's.
     let savedDc = gGlobals.delegationConfig
     gGlobals.delegationConfig = childCfg.delegation
+    defer: gGlobals.delegationConfig = savedDc
     var childReg = newToolRegistry()
     childReg.register(shellTool())
     let llmConfigured = not gGlobals.isNil and gGlobals.llmClient.baseUrl.len > 0
     if childGetsDelegateTool(persona, llmConfigured):
       childReg.register(makeDelegateTool())
-    gGlobals.delegationConfig = savedDc
     if parentCfg.mcpServers.len > 0:
       discard registerMcpServers(childReg, parentCfg.mcpServers)
     let scopedChildReg = scopedRegistry(childReg, persona)
@@ -562,6 +563,7 @@ proc cmdAsk*(
     config = "";
     envFile = ".env";
     noStream = false;
+    plan = false;
 ): int =
   ## Single-shot question mode.
   if question.len == 0:
@@ -596,6 +598,30 @@ proc cmdAsk*(
   var mem = openMemory(cfg)
   defer: mem.close()
   let userInput = question.join(" ")
+
+  if plan:
+    # --- Plan-Execute mode ---
+    var planRes: PlanResult
+    try:
+      let executionPlan = generatePlan(llm, userInput, reg)
+      stdout.writeLine(formatPlan(executionPlan))
+      stdout.flushFile()
+      var agentCfg = newAgentConfig(cfg)
+      if not noStream:
+        agentCfg.streamCallback = proc(event: ChatCompletionStreamEvent) {.gcsafe, raises: [].} =
+          {.cast(raises: []).}:
+            if event.kind == sekContent and event.delta.len > 0:
+              stdout.write(event.delta)
+              stdout.flushFile()
+      planRes = executePlan(agentCfg, llm, reg, mem, userInput, executionPlan)
+    except PlanError as e:
+      printError("Plan generation failed: " & e.msg); return 1
+    except CatchableError as e:
+      printError(e.msg); return 1
+    stdout.writeLine(planRes.finalAnswer)
+    return 0
+
+  # --- ReAct mode (default) ---
   var res: AgentResult
   try:
     if noStream:
@@ -991,6 +1017,7 @@ proc cmdWeb*(
 
   let reg = buildRegistry(cfg)
   var mem = openMemory(cfg)
+  defer: mem.close()
 
   let ws = newWebServer(cfg, llm, reg, mem)
   gWebServer = ws
@@ -1012,7 +1039,6 @@ proc cmdWeb*(
   waitFor serveUntilInterrupted()
   printSystemNote("shutting down web server")
   ws.stop()
-  mem.close()
   return 0
 
 # ---------------------------------------------------------------------------
@@ -1234,6 +1260,7 @@ when isMainModule:
       "config":      "path to TOML config (overrides default)",
       "envFile":     "path to .env file (default: .env)",
       "noStream":    "disable token-by-token streaming output",
+      "plan":        "use plan-execute mode instead of ReAct loop",
     }],
     [cmdSession, cmdName = "session", help = {
       "model":       "override model name",

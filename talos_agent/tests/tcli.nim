@@ -126,10 +126,10 @@ suite "cli: applyOverrides":
 
 suite "cli: loadConfigWithOverrides":
   test "applies env-based overrides on top of defaults":
-    putEnv("MERCURY_PROVIDER", "openrouter")
+    putEnv("TALOS_PROVIDER", "openrouter")
     putEnv("OPENROUTER_API_KEY", "fake-key")
     defer:
-      delEnv("MERCURY_PROVIDER")
+      delEnv("TALOS_PROVIDER")
       delEnv("OPENROUTER_API_KEY")
 
     var ov = emptyOverrides()
@@ -230,10 +230,10 @@ suite "cli: cmdHistory and cmdSearch on a fresh db":
   test "history prints 'no sessions yet' to the user when the db is empty":
     let path = tempDbPath()
     defer: teardownDb(path)
-    putEnv("MERCURY_DB_PATH", path)
+    putEnv("TALOS_DB_PATH", path)
     putEnv("OPENROUTER_API_KEY", "dummy")
     defer:
-      delEnv("MERCURY_DB_PATH")
+      delEnv("TALOS_DB_PATH")
       delEnv("OPENROUTER_API_KEY")
     let (rc, output) = captureStdout(proc(): int = cmdHistory(envFile = "/dev/null"))
     check rc == 0
@@ -243,10 +243,10 @@ suite "cli: cmdHistory and cmdSearch on a fresh db":
     let path = tempDbPath()
     defer: teardownDb(path)
     let sid = seedSession(path, "alpha bravo")
-    putEnv("MERCURY_DB_PATH", path)
+    putEnv("TALOS_DB_PATH", path)
     putEnv("OPENROUTER_API_KEY", "dummy")
     defer:
-      delEnv("MERCURY_DB_PATH")
+      delEnv("TALOS_DB_PATH")
       delEnv("OPENROUTER_API_KEY")
     let (rc, output) = captureStdout(proc(): int = cmdHistory(envFile = "/dev/null"))
     check rc == 0
@@ -255,10 +255,10 @@ suite "cli: cmdHistory and cmdSearch on a fresh db":
   test "search rejects an empty query":
     let path = tempDbPath()
     defer: teardownDb(path)
-    putEnv("MERCURY_DB_PATH", path)
+    putEnv("TALOS_DB_PATH", path)
     putEnv("OPENROUTER_API_KEY", "dummy")
     defer:
-      delEnv("MERCURY_DB_PATH")
+      delEnv("TALOS_DB_PATH")
       delEnv("OPENROUTER_API_KEY")
     let rc = cmdSearch(query = @[], envFile = "/dev/null")
     check rc == 2
@@ -267,10 +267,10 @@ suite "cli: cmdHistory and cmdSearch on a fresh db":
     let path = tempDbPath()
     defer: teardownDb(path)
     discard seedSession(path, "the quick brown fox")
-    putEnv("MERCURY_DB_PATH", path)
+    putEnv("TALOS_DB_PATH", path)
     putEnv("OPENROUTER_API_KEY", "dummy")
     defer:
-      delEnv("MERCURY_DB_PATH")
+      delEnv("TALOS_DB_PATH")
       delEnv("OPENROUTER_API_KEY")
     let (rc, output) = captureStdout(
       proc(): int = cmdSearch(query = @["nonexistent"], envFile = "/dev/null"))
@@ -281,10 +281,10 @@ suite "cli: cmdHistory and cmdSearch on a fresh db":
     let path = tempDbPath()
     defer: teardownDb(path)
     let sid = seedSession(path, "the quick brown fox")
-    putEnv("MERCURY_DB_PATH", path)
+    putEnv("TALOS_DB_PATH", path)
     putEnv("OPENROUTER_API_KEY", "dummy")
     defer:
-      delEnv("MERCURY_DB_PATH")
+      delEnv("TALOS_DB_PATH")
       delEnv("OPENROUTER_API_KEY")
     let (rc, output) = captureStdout(
       proc(): int = cmdSearch(query = @["quick"], envFile = "/dev/null"))
@@ -306,10 +306,10 @@ suite "cli: ask and session error handling without a live LLM":
   test "session reports unknown id without crashing":
     let path = tempDbPath()
     defer: teardownDb(path)
-    putEnv("MERCURY_DB_PATH", path)
+    putEnv("TALOS_DB_PATH", path)
     putEnv("OPENROUTER_API_KEY", "dummy")
     defer:
-      delEnv("MERCURY_DB_PATH")
+      delEnv("TALOS_DB_PATH")
       delEnv("OPENROUTER_API_KEY")
     let rc = cmdSession(id = @["sess_made_up"], envFile = "/dev/null")
     check rc == 4

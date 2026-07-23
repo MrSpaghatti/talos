@@ -392,16 +392,16 @@ db_path=/tmp/talos-integration.db
     let envFile = tmpDir / ".env"
     writeTempFile(envFile, "OPENROUTER_API_KEY=sk-from-env-file\n")
 
-    putEnv("MERCURY_MAX_TOKENS", "555")
-    putEnv("MERCURY_PROVIDER", "openrouter")
+    putEnv("TALOS_MAX_TOKENS", "555")
+    putEnv("TALOS_PROVIDER", "openrouter")
     # Clear any real OPENROUTER_API_KEY from the OS env so it does not shadow
     # the .env file value under test (OS env has higher precedence than .env).
     let hadApiKey = existsEnv("OPENROUTER_API_KEY")
     let oldApiKey = getEnv("OPENROUTER_API_KEY")
     delEnv("OPENROUTER_API_KEY")
     defer:
-      delEnv("MERCURY_MAX_TOKENS")
-      delEnv("MERCURY_PROVIDER")
+      delEnv("TALOS_MAX_TOKENS")
+      delEnv("TALOS_PROVIDER")
       if hadApiKey:
         putEnv("OPENROUTER_API_KEY", oldApiKey)
 

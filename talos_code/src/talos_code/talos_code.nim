@@ -24,7 +24,7 @@
 ##   - Multi-file diffs and PR creation
 ##   - Branch-per-task isolation
 
-import std/[os, strutils]
+import std/[os, strutils, sequtils]
 
 import talos_core/config
 import talos_core/tool_registry
@@ -81,7 +81,7 @@ when isMainModule:
 
   let extEnv = getEnv("TALOS_ALLOWED_EXTENSIONS", "")
   if extEnv.len > 0:
-    harnessCfg.allowedExtensions = extEnv.split(',')
+    harnessCfg.allowedExtensions = extEnv.split(',').mapIt(it.strip())
   else:
     harnessCfg.allowedExtensions = @[".nim", ".c", ".h", ".cfg", ".md", ".txt",
                                      ".json", ".toml", ".yml", ".yaml"]

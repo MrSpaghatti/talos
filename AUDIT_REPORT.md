@@ -1,46 +1,116 @@
 # NOTE: This project has been renamed from Mercury Agent to Talos Agent.
 
-> **Status (2026-07-19)**: Most findings below were resolved in the
-> hardening pass — see CHANGELOG `[Unreleased]`. Specifically: no
-> `dummy.nim` files remain; `file_path_validator.nim` uses `std/re`
-> (not `nre`); `asyncdispatch` imports are in place; `-d:ssl` is
-> enforced via `config.nims`. Remaining open questions: agent loop
-> location / dispatcher threading, SQLite WAL mode, and `discard`-ed
-> `CatchableError` instances.
+# Audit Report — 2026-07-22
 
-# Comprehensive Codebase Audit Report
+Deep-dive audit covering all source modules across 3 packages (479 tests
+passing). Five parallel scout agents reviewed: core agent loop/dispatcher/
+memory/config, Discord/security modules, agent CLI + coding harness, LLM
+client + MCP, and TUI + rename remnants. All findings below were verified
+against actual source code.
 
-This report summarizes the findings from a deep dive into the `mercury` project (`mercury_core` and `mercury_agent`), including testing issues, architectural flaws, minor issues, and actionable next steps for future agent sessions.
+## Errors (actual bugs)
 
-The audit focused on compilation errors, unit test stability, error handling, bad coding practices, and integration concerns.
+- [ ] **agent_loop.nim:347 — `resp.toolCalls[^1]` crash on empty toolCalls**
+  If `finishReason == "tool_calls"` but `resp.toolCalls.len == 0`, `isToolCallTurn`
+  is true, the for loop doesn't execute (no new history entries), but `detectLoop`
+  can fire from accumulated history. `resp.toolCalls[^1]` then crashes with
+  index out of bounds. Fix: guard with `resp.toolCalls.len > 0` or use a
+  generic stop message.
 
-## Detailed Plans
+- [ ] **thread_mapping.nim:81,105,114 — `row[0]` on empty seq from db.getRow**
+  `db.getRow` returns `@[]` when no rows match. Accessing `row[0]` crashes
+  with index out of bounds. Affects `getSessionForThread`,
+  `getLatestSessionForChannel`. Fix: check `row.len > 0` before `row[0]`.
 
-For structured, step-by-step instructions on resolving the identified issues, please refer to the following companion documents:
-- **`PLAN_CORE_ARCHITECTURE.md`**: Addresses major architectural integration issues between `agent_loop.nim`, the agent dispatcher, and SQLite concurrency.
-- **`PLAN_TESTING_FIXES.md`**: Addresses compilation errors in the test suite, macro usage, C dependencies (PCRE vs regex), and the `raiseSSLError` bug in Nim `asyncnet`.
-- **`PLAN_MINOR_ISSUES.md`**: Covers bad coding practices, unused imports, empty discard statements, and edge cases in config loading.
+- [ ] **talos_agent.nim:312-319 — delegation config not restored on exception**
+  `gGlobals.delegationConfig` is swapped to `childCfg.delegation` at line 313
+  and restored at line 319, but if `childReg.register(shellTool())` or
+  `makeDelegateTool()` throws between those lines, `savedDc` is never
+  restored. Corrupts all subsequent delegations. Fix: `defer:
+  gGlobals.delegationConfig = savedDc`.
 
-## Summary of Key Findings
+- [ ] **talos_agent.nim:993 — cmdWeb `mem.close()` not protected by defer**
+  `mem.close()` at line 1015 is only reached on normal exit. If
+  `serveUntilInterrupted()` throws, the SQLite handle leaks. Fix: `defer:
+  mem.close()` after line 993.
 
-1. **Test Suite Stability & Compilation:**
-   - The `mercury_core` test suite was failing to compile because the Nimble tasks used `nim c -r` instead of `nim c --path:src -d:ssl -r`. Adding `-d:ssl` is critical because the LLM and Discord clients use HTTPS, and Nim's `asyncnet`/`httpclient` throws `raiseSSLError` undeclared identifier bugs without it. This has been patched locally with `config.nims` and Nimble task updates, but needs permanent integration.
-   - Some tests (like `test_discord_mocks.nim`) lacked `import std/asyncdispatch`, causing the `waitFor` macro to fail.
-   - `file_path_validator.nim` imports `nre` (which dynamically links to PCRE via `libpcre.so`). This caused integration tests to fail on systems without `libpcre3`. A migration to the native `nim-regex` package (already in nimble) is highly recommended.
+- [ ] **mcp_tool.nim:121-132 — MCP client closed after partial tool registration**
+  If `registerMcpTools` throws after partially registering tools, the error
+  handler closes `client.http`, but already-registered tools hold closures
+  pointing to the now-closed client. Agent will get errors calling those
+  tools. Fix: roll back registered tools on error, or don't close the client
+  if any tools were registered.
 
-2. **Core Architecture Integration:**
-   - **Agent Dispatcher:** Currently, `mercury_core/src/mercury_core/agent_dispatcher.nim` mocks the agent response (`sleepAsync(100)`). To complete Phase 1 / Wave 2 & 3, the Discord bot needs to spawn a background thread, execute the actual `runAgentLoop`, and return the true LLM output.
-   - **Circular Dependency Risk:** `agent_loop.nim` is currently situated in `mercury_agent`. If `mercury_core`'s dispatcher is to use it, it should probably be moved to `mercury_core/` to allow the Discord bot (in `mercury_core`) to natively depend on it without causing circular imports.
-   - **SQLite Concurrency:** The agent loop logs messages to memory, and the Discord bot also checks sessions. Concurrent access to the SQLite database from different threads might cause `database is locked` errors if WAL mode (`PRAGMA journal_mode=WAL`) isn't enforced or if connections aren't pooled properly.
+- [ ] **talos_code.nim:84 — extension list parsing doesn't trim whitespace**
+  `extEnv.split(',')` without `.strip()` means `"  .nim , .c  "` produces
+  `["  .nim ", " .c  "]` which won't match file extensions. Fix:
+  `extEnv.split(',').mapIt(it.strip())`.
 
-3. **Bad Coding Practices / Minor Issues:**
-   - **Silent Error Swallowing:** There are multiple instances of `except CatchableError:` followed by `discard` (especially in `shell.nim`, file tools, and cleanup code). These should at least log to stderr so debuggers can trace silent failures.
-   - **Dead Code:** `dummy.nim` files exist in both packages and should be removed. Several test files and modules have unused imports (`std/options`, `dimscord`).
-   - **Deprecation Warnings:** Dependencies like `jsony` and `dimscord` raise `CaseTransition` warnings in Nim 2.2.x. While technically upstream issues, wrapping them or contributing PRs might be necessary if `-d:strict` is ever used.
+- [ ] **llm_client.nim:505 — `parseInt(parsed.port)` not wrapped in try/except**
+  Streaming SSE path crashes on non-numeric port. The non-streaming path
+  uses `newHttpClient` which handles this internally. Fix: wrap in try/except
+  or use `parseInt` with a fallback.
 
-## Immediate Next Steps for Next Agent
+- [ ] **config.nim:529-541 — .env parseFloat/parseInt failures silently discarded**
+  Malformed numeric values in `.env` are silently ignored (`discard`), unlike
+  OS env vars (`applyEnvVars`) which raise `ConfigError`. Inconsistent and
+  confusing. Fix: raise ConfigError on parse failure in .env parsing too.
 
-1. Read the `PLAN_*.md` files.
-2. Implement the test fixes to ensure a green build pipeline on clean environments.
-3. Address the `except CatchableError` swallowed exceptions.
-4. Refactor `agent_loop.nim` to be accessible by `agent_dispatcher.nim` and implement thread spawning for real agent requests from Discord.
+- [ ] **test_config.nim:1, talos_core/test_simple.nim:1 — stale `mercury_core` imports**
+  These standalone test files import `mercury_core/config` and
+  `mercury_core/llm_client`, which don't exist after the rename. Not in the
+  test suite but will confuse anyone who tries to run them. Fix: update
+  imports or delete if unused.
+
+- [ ] **tcli.nim, tintegration.nim — tests use deprecated `MERCURY_*` env vars**
+  Tests use `MERCURY_PROVIDER`, `MERCURY_DB_PATH`, `MERCURY_MAX_TOKENS` etc.
+  They work via backward-compat fallbacks but trigger deprecation warnings
+  on every run. Fix: update to `TALOS_*`.
+
+## Inefficiencies
+
+- [ ] **memory.nim:354 — `listSessions` correlated subquery is O(n²)**
+  `(SELECT COUNT(*) FROM messages ms WHERE ms.session_id = s.id)` runs per
+  session. Should use `LEFT JOIN messages m ON m.session_id = s.id GROUP BY
+  s.id`.
+
+- [ ] **shell.nim:163 / compile.nim:23 — duplicated `setNonBlocking`/`drainAvailable`**
+  Identical POSIX I/O helpers copy-pasted in two files. Maintenance risk if
+  one is fixed and the other isn't. Should be shared.
+
+- [ ] **rate_limit.nim:70, llm_client.nim:345 — exponential backoff can overflow**
+  `(1 shl (attempt - 1))` overflows at attempt=32 (32-bit) or 64 (64-bit).
+  No upper cap on backoff delay. Fix: `min(attempt, 30)` or cap the sleep.
+
+## Not bugs (verified safe)
+
+- `agent_dispatcher.nim:76` — `dbPath` IS expanded: the daemon calls
+  `resolveDbPath(cfg)` at line 1130 before passing to the dispatcher.
+- `llm_client.nim:635-637` — `toolCallId` overwrite is correct: index is a
+  temporary placeholder, real id takes precedence when it arrives.
+- `llm_client.nim:361-363` — retry error type is correct: Nim preserves the
+  actual object type (`NetworkError`) when raising via a `ref LLMError` variable.
+- `mcp_tool.nim:135` — client captured in closures is kept alive by ORC;
+  not a use-after-free on the success path.
+
+## Style / Consistency
+
+- [ ] **discord_types.nim:9 — hardcoded deny list duplicates file_path_validator patterns**
+  `defaultDiscordConfig` hardcodes a deny list that overlaps with
+  `file_path_validator`'s mandatory patterns. Should reference the shared list.
+- [ ] **config.nim:144-193 — repetitive MERCURY_* backward-compat code**
+  ~20 identical fallback patterns. Could be a macro or table-driven.
+- [ ] **.gitignore:49 — stale `mercury_code` entry**
+  References old binary name. Already covered by `talos_code` pattern.
+
+## Info (observations, not action items)
+
+- DI design in discord.nim is sound — callback injection avoids dimscord
+  generics/async limitations.
+- Shell tool pipe handling (incremental drain) correctly prevents deadlock
+  on large output (>64 KiB).
+- CSRF guard in web_server.nim is correct — Origin header check + loopback binding.
+- `withinSandbox` in code_tool.nim is solid — resolvePathSafe + fail-closed.
+- TUI terminal cleanup is correct — try/finally with illwillDeinit().
+- All SQL queries use parameterized statements (?). No SQL injection.
+- No hardcoded secrets detected.

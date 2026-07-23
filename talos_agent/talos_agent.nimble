@@ -7,6 +7,7 @@ bin           = @["talos_agent"]
 requires "nim >= 2.0.0"
 requires "db_connector >= 0.1.0"
 requires "illwill >= 0.4.0"
+requires "dimscord >= 1.0.0"
 requires "cligen >= 1.6.0"
 switch("path", "src")
 switch("path", "../talos_core/src")

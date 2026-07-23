@@ -8,6 +8,75 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added — 2026-07-22 Task 6: Plan-Execute Mode
+
+- **`plan_executor.nim`** (new module in `talos_core`). An alternative to
+  the flat ReAct loop: asks the LLM to produce a structured JSON plan up
+  front, then executes steps in dependency order (topological sort via
+  Kahn's algorithm), and synthesises a final answer from all step results.
+  Tool steps execute via the tool registry; reasoning steps (empty
+  `toolName`) call the LLM with prior step context. On step failure,
+  dependent steps are marked skipped and independent remaining steps still
+  execute. All results are logged to memory.
+- **`--plan` flag on `talos_agent ask`.** Switches from ReAct to
+  Plan-Execute mode. The plan is displayed before execution, then the
+  final answer is printed. Works with `--no-stream` and streaming.
+- **35 new tests** in `test_plan_executor.nim` covering plan parsing,
+  topological sort (chains, diamonds, cycles), plan generation via mock
+  LLM, plan execution with tool calls and reasoning steps, failure
+  handling, statistics tracking, and formatting. Total: 514 tests.
+
+### Fixed — 2026-07-22 onboarding + deep-dive audit
+
+- **`agent_loop.nim` crash on empty tool_calls with loop detection.**
+  If `finishReason == "tool_calls"` but `resp.toolCalls` was empty,
+  `resp.toolCalls[^1]` crashed with index out of bounds. Now guarded
+  with a `len > 0` check.
+- **`thread_mapping.nim` crash on empty db.getRow result.**
+  `getSessionForThread` and `getLatestSessionForChannel` accessed `row[0]`
+  without checking `row.len`, crashing when no rows matched. Added bounds
+  checks.
+- **Delegation config not restored on exception.** The parent's
+  `delegationConfig` was manually swapped and restored, but an exception
+  between swap and restore left it corrupted. Now uses `defer`.
+- **SQLite handle leak in `cmdWeb`.** `mem.close()` was only reached on
+  normal exit; if `serveUntilInterrupted` threw, the handle leaked.
+  Moved to `defer`.
+- **MCP client closed after partial tool registration.** If
+  `registerMcpTools` threw after registering some tools, the error handler
+  closed the client, leaving registered tool closures pointing to a dead
+  HttpClient. Now only closes if no tools were registered.
+- **`talos_code` extension list didn't trim whitespace.** `TALOS_ALLOWED_EXTENSIONS`
+  values like `" .nim , .c "` produced entries with spaces that never matched.
+  Added `.mapIt(it.strip())`.
+- **Streaming SSE crash on non-numeric port.** `parseInt(parsed.port)` in
+  `chatCompletionStream` wasn't wrapped in try/except, unlike the
+  non-streaming path.
+- **Exponential backoff integer overflow.** `(1 shl (attempt - 1))` could
+  overflow at attempt=32. Capped with `min(attempt - 1, 30)`.
+- **`.env` parse failures silently discarded.** Malformed numbers in `.env`
+  (e.g. `TALOS_MAX_TOKENS=abc`) were silently ignored with `discard`,
+  unlike OS env vars which raise `ConfigError`. Now consistent.
+- **`listSessions` O(n²) query.** Correlated subquery replaced with
+  `LEFT JOIN + GROUP BY`.
+- **Stale `mercury_core` imports and `MERCURY_*` env vars.** Updated
+  `test_config.nim`, `test_simple.nim`, and all `MERCURY_*` references in
+  `tcli.nim` and `tintegration.nim` to `TALOS_*`.
+
+### Fixed — build/CI infrastructure
+
+- **`talos_agent.nimble` missing `dimscord` dependency.** `nimble build`
+  failed because the transitive dep wasn't declared. Added
+  `requires "dimscord >= 1.0.0"`.
+- **CI workflow missing `run: nimble test` for core.** The "Test core"
+  step had no `run` command, so CI never ran core tests.
+- **`Makefile` didn't build/test `talos_code`.** Added `talos_code` to
+  both `build` and `test` targets.
+- **Stale `mercury_agent.out` and `mercury_code` binaries.** Removed
+  pre-rename build artifacts and added to `.gitignore`.
+- **`CHANGELOG.md` `[Unreleased]` referenced `mercury_*` paths.** Updated
+  all module/path references to `talos_*`.
+
 
 ### Testing
 
@@ -62,7 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opposite of the documented default. The flag was also never read
   anywhere to actually gate delegation. Fixed: `loadPersonasFromStream`
   now seeds each persona with `DefaultDelegateEnabled` (true) before
-  parsing, and the delegate-tool spawn path in `mercury_agent.nim` only
+  parsing, and the delegate-tool spawn path in `talos_agent.nim` only
   registers a `delegate` tool for a child agent when its persona's
   `delegateEnabled` is true. The gating decision was pulled into a small
   pure `childGetsDelegateTool` proc so it's directly unit-testable; new
@@ -72,14 +141,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Streaming responses (SSE).** `chatCompletionStream` proc added to
-  `mercury_core/llm_client.nim` with raw-socket SSE parsing. `AgentConfig`
+  `talos_core/llm_client.nim` with raw-socket SSE parsing. `AgentConfig`
   accepts an optional `streamCallback`; when set, the ReAct loop streams
   token-by-token deltas to the callback. CLI (`chat`, `ask`, `session`)
   defaults to streaming output with a `--no-stream` flag to disable.
   Discord daemon does not yet support progressive edits (blocked on
   dimscord `--threads:on`).
 
-- **Web UI (`mercury_agent web`).** New `web_server.nim` module serves a
+- **Web UI (`talos_agent web`).** New `web_server.nim` module serves a
   single-page chat interface from Nim's stdlib `asynchttpserver`. Routes:
   `GET /` (index.html), `GET /assets/*` (CSS/JS), `POST /api/chat` (agent
   loop, JSON response), `GET /api/sessions`, `GET /api/sessions/:id`,
@@ -89,22 +158,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory (embedded at compile time via `staticRead` when
   `-d:embedAssets` is set; the filesystem-read fallback validates asset
   paths to prevent traversal). Configurable via `webPort` in TOML,
-  `MERCURY_WEB_PORT` env var, or `--port` CLI flag (default 8080).
+  `TALOS_WEB_PORT` env var, or `--port` CLI flag (default 8080).
   SSE streaming deferred — `asynchttpserver` closes the connection after
   `respond()`, making long-lived streams impractical.
 
-- **`MercuryConfig.webPort`** field added to `config.nim` (default 8080),
-  loaded from TOML key `web_port` and env var `MERCURY_WEB_PORT`.
+- **`TalosConfig.webPort`** field added to `config.nim` (default 8080),
+  loaded from TOML key `web_port` and env var `TALOS_WEB_PORT`.
 
-- **`listSessions`** proc added to `mercury_core/memory.nim` with
+- **`listSessions`** proc added to `talos_core/memory.nim` with
   `SessionSummary` type for listing recent sessions.
 
 ### Changed
-- **Agent loop relocated to `mercury_core`.** `agent_loop.nim` moved from
-  `mercury_agent/src/` to `mercury_core/src/mercury_core/`, eliminating the
+- **Agent loop relocated to `talos_core`.** `agent_loop.nim` moved from
+  `talos_agent/src/` to `talos_core/src/talos_core/`, eliminating the
   cross-package injection hack. `agent_dispatcher` now imports `AgentResult`
-  directly from `agent_loop`. All callers (`mercury_agent`, `mercury_code`,
-  test files) updated to `import mercury_core/agent_loop`.
+  directly from `agent_loop`. All callers (`talos_agent`, `talos_code`,
+  test files) updated to `import talos_core/agent_loop`.
 - **SQLite busy_timeout added to memory.nim.** `PRAGMA busy_timeout=5000`
   prevents `SQLITE_BUSY` under concurrent read/write access (WAL mode was
   already enabled).
@@ -181,9 +250,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-turn runs.
 
 - **Security — coding-harness file tools ignored the sandbox root.**
-  `read_file` / `write_file` in `mercury_code/code_tool.nim` documented
+  `read_file` / `write_file` in `talos_code/code_tool.nim` documented
   operating "within the sandbox" (and the CLI refuses to start without
-  `MERCURY_SANDBOX_ROOT`), but never enforced it — extension-less paths
+  `TALOS_SANDBOX_ROOT`), but never enforced it — extension-less paths
   bypassed even the extension filter, letting a model read/write anywhere
   (`/etc/passwd`, `~/.ssh/*`, …). Added `withinSandbox` (symlink/`..`-resolving,
   `/`-boundary, fail-closed) and gated both tools on it.
@@ -191,12 +260,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `file_path_validator.validatePath` used `startsWith(sandbox)`, so
   `/home/u/sandbox-evil/…` passed the check for a `/home/u/sandbox` sandbox.
   Now requires an exact match or a `/` boundary.
-- **`mercury_code` could not run any real build/test command.** `runCompile`
+- **`talos_code` could not run any real build/test command.** `runCompile`
   called `startProcess` without `poEvalCommand`, so multi-word commands like
   `nim c -r src/main.nim` were treated as a single executable name and failed
   to launch. Added `poEvalCommand`.
 - **Shell / compile output deadlock on large output.** `tools/shell.nim` and
-  `mercury_code/compile.nim` read the child's pipe only after it exited, so any
+  `talos_code/compile.nim` read the child's pipe only after it exited, so any
   command emitting more than one pipe buffer (~64 KiB) blocked forever and was
   killed as a false timeout. Both now drain incrementally (non-blocking) on
   POSIX, capping stored output.

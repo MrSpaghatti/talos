@@ -46,6 +46,9 @@ the agent or browsing past sessions.
   and offline-testable mock API.
 - **Loop & error safety** — agent loop has loop-detection, max-iteration
   limits, and graceful handling of LLM/tool errors.
+- **Plan-Execute mode** — `ask --plan` asks the LLM to decompose the goal
+  into a structured plan, then executes steps in dependency order with
+  tool calls and reasoning, before synthesising a final answer.
 - **Layered configuration** — defaults < TOML config < .env <
   environment variables.
 
@@ -173,6 +176,12 @@ Common options (chat / ask / session):
                           means leave at config default.
   --config=<path>         Path to TOML config (overrides default).
   --envFile=<path>        Path to .env (default: .env).
+  --noStream              Disable token-by-token streaming output.
+
+Option for ask only:
+  --plan                  Use plan-execute mode (LLM decomposes into steps,
+                          executes them, synthesises a final answer).
+
 
 Options for history / search:
   --limit=<n>             Max sessions / matches to show.
@@ -218,6 +227,7 @@ want to export those variables globally.
 | `tool_registry.nim` | Named registry of tools; serializes to OpenAI `tools` array; safe execution.    |
 | `memory.nim`        | SQLite + FTS5: sessions, messages, full-text search, token-usage aggregation.   |
 | `agent_loop.nim`    | ReAct loop: build prompt, call LLM, dispatch tool calls, log to memory.         |
+| `plan_executor.nim` | Plan-Execute mode: LLM-generated plan, topo-sorted step execution, synthesis. |
 | `token_counter.nim` | Cheap heuristic token counter used to size requests.                            |
 
 ### `talos_core/` — Discord & Agent Infrastructure

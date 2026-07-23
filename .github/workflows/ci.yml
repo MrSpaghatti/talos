@@ -52,6 +52,7 @@ jobs:
 
       - name: Test core
         working-directory: talos_core
+        run: nimble test -y
         env:
           CI: "true"
 

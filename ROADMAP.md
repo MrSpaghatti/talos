@@ -28,7 +28,7 @@ Detailed implementation specs in `plans/task-*.md`. Recommended execution order:
 2. ~~[Task 4 — Code Quality](plans/task-04-code-quality.md)~~ ✅
 3. [Task 2 — Streaming](plans/task-02-streaming.md) ✅ (CLI streaming; Discord uses a refreshed typing indicator instead of progressive edits — see task file)
 4. [Task 3 — Web UI](plans/task-03-web-ui.md) ✅ (non-streaming; SSE deferred; CSRF + rate limiting implemented)
-5. [Task 6 — Plan-Execute](plans/task-06-plan-execute.md)
+5. ~~[Task 6 — Plan-Execute](plans/task-06-plan-execute.md)~~ ✅
 6. [Task 7 — MCP Streaming](plans/task-07-mcp-streaming.md)
 7. [Task 5 — Vector Memory](plans/task-05-vector-memory.md)
 
@@ -39,14 +39,14 @@ Detailed implementation specs in `plans/task-*.md`. Recommended execution order:
 | 3 | [Web UI](plans/task-03-web-ui.md) | 🟢 Done | Medium-Large |
 | 4 | [Code Quality](plans/task-04-code-quality.md) | 🟢 Done | Small-Medium |
 | 5 | [Vector Memory](plans/task-05-vector-memory.md) | 🔴 Not Started | Medium-Large |
-| 6 | [Plan-Execute Mode](plans/task-06-plan-execute.md) | 🔴 Not Started | Medium |
+| 6 | [Plan-Execute Mode](plans/task-06-plan-execute.md) | 🟢 Done | Medium |
 | 7 | [MCP Streaming](plans/task-07-mcp-streaming.md) | 🔴 Not Started | Medium |
 
 ## 📊 Test Suite
 
 | Package | Test Files | Tests | Status |
 |---------|-----------|-------|--------|
-| talos_core | 21 | 352 | ✅ All pass |
+| talos_core | 22 | 387 | ✅ All pass |
 | talos_agent | 7 | 98 | ✅ All pass |
 | talos_code | 1 | 29 | ✅ All pass |
-| **Total** | **29** | **479** | **✅ 0 FAILED** |
+| **Total** | **30** | **514** | **✅ 0 FAILED** |
