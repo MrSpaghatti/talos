@@ -4,7 +4,7 @@
 ## agent loop, scrolls to follow streaming output, and pauses
 ## scroll-on-output when the user scrolls up.
 
-import std/strutils
+import std/[strutils, unicode]
 import illwill
 import theme
 
@@ -36,16 +36,20 @@ proc newTranscriptRegion*(width: int): TranscriptRegion =
   )
 
 proc wrapLine(text: string; maxWidth: int): seq[string] =
-  ## Hard-wrap text to width. Preserves embedded newlines.
+  ## Hard-wrap text to width, on rune boundaries. Preserves embedded
+  ## newlines. Wrapping by raw byte offset would split a multi-byte UTF-8
+  ## character mid-sequence for any non-ASCII content (from the user or an
+  ## LLM response) and miscount its visual width.
   let width = if maxWidth < 1: 1 else: maxWidth
   for rawLine in text.split('\n'):
     if rawLine.len == 0:
       result.add("")
       continue
+    let runeSeq = toRunes(rawLine)
     var i = 0
-    while i < rawLine.len:
-      let endPos = min(i + width, rawLine.len)
-      result.add(rawLine[i..<endPos])
+    while i < runeSeq.len:
+      let endPos = min(i + width, runeSeq.len)
+      result.add($runeSeq[i..<endPos])
       i += width
   if result.len == 0:
     result.add("")

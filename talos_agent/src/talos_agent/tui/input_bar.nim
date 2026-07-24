@@ -140,15 +140,19 @@ proc submit*(bar: var InputBar): string =
 # ---- Rendering ----
 
 proc wrappedInputLines(text: string; width: int): seq[string] =
+  ## Wraps on rune boundaries, not raw byte offsets — slicing by byte
+  ## offset would split a multi-byte UTF-8 character mid-sequence for any
+  ## non-ASCII input, corrupting it and miscounting its visual width.
   if width < 1: return @[]
   for rawLine in text.split('\n'):
     if rawLine.len == 0:
       result.add("")
       continue
+    let runeSeq = toRunes(rawLine)
     var i = 0
-    while i < rawLine.len:
-      let endPos = min(i + width, rawLine.len)
-      result.add(rawLine[i..<endPos])
+    while i < runeSeq.len:
+      let endPos = min(i + width, runeSeq.len)
+      result.add($runeSeq[i..<endPos])
       i += width
   if result.len == 0:
     result.add("")
@@ -174,11 +178,15 @@ proc render*(bar: var InputBar; tb: var TerminalBuffer; theme: TuiTheme;
 
   if focused and lines.len > 0:
     let lastLineIdx = nLines - 1
-    # Compute byte offset within the last rendered line
-    var prevLinesBytes = 0
+    # Compute the rune offset within the last rendered line. Must be in
+    # the same units as cursorRunIdx (a rune index over the whole text) —
+    # summing lines[j].len (a byte count) here used to diverge from a rune
+    # index for any non-ASCII content, occasionally driving cursorX
+    # negative and crashing on setCursorPos's Natural parameter.
+    var prevLinesRunes = 0
     for j in 0..<lastLineIdx:
-      prevLinesBytes += lines[j].len
+      prevLinesRunes += runeLen(lines[j])
     let cursorRunIdx = bytePosToRuneIndex(bar.text, bar.cursorPos)
-    let cursorInLastLine = cursorRunIdx - prevLinesBytes
-    let cursorX = prompt.len + min(cursorInLastLine, availWidth)
+    let cursorInLastLine = cursorRunIdx - prevLinesRunes
+    let cursorX = prompt.len + max(0, min(cursorInLastLine, availWidth))
     tb.setCursorPos(cursorX, y)

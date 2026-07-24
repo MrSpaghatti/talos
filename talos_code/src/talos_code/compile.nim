@@ -17,33 +17,9 @@ else:
   import std/streams
 
 import code_runner
+import talos_core/posix_io
 
 const DefaultCompileTimeoutMs = 120_000
-
-when defined(posix):
-  proc setNonBlocking(fd: FileHandle) =
-    let flags = fcntl(fd.cint, F_GETFL)
-    if flags != -1:
-      discard fcntl(fd.cint, F_SETFL, flags or O_NONBLOCK)
-
-  proc drainAvailable(fd: FileHandle; buf: var string; total: var int;
-                      cap: int): bool =
-    ## Reads all currently-available bytes on `fd`, storing up to `cap` total
-    ## bytes into `buf` (counting every byte in `total`) and discarding the
-    ## rest so the child never blocks on a full pipe. Returns true at EOF.
-    var tmp {.noinit.}: array[8192, char]
-    while true:
-      let n = read(fd.cint, addr tmp[0], tmp.len)
-      if n == 0:
-        return true
-      if n < 0:
-        return false
-      total += n
-      if cap <= 0 or buf.len < cap:
-        let take = if cap <= 0: n else: min(n, cap - buf.len)
-        let oldLen = buf.len
-        buf.setLen(oldLen + take)
-        copyMem(addr buf[oldLen], addr tmp[0], take)
 
 proc runCompile*(
     cmd: string;
@@ -93,6 +69,16 @@ proc runCompile*(
 
   when defined(posix):
     setNonBlocking(p.outputHandle)
+    # Best-effort: put the child (the shell running `cmd`) in its own
+    # process group so a timeout can signal the whole tree — e.g. the
+    # actual compiled-and-run binary a "nim c -r ..." build command
+    # spawns as a grandchild — instead of just the shell. Without this,
+    # p.kill()/p.terminate() only ever signaled the shell's single pid, so
+    # a hung grandchild was reparented to init and kept running
+    # indefinitely after "TIMEOUT" was reported. There's a narrow race if
+    # the shell spawns its own children before this call lands, but it
+    # covers the common case with no extra dependency.
+    discard setpgid(Pid(p.processID), Pid(0))
     var eof = false
     while true:
       if not eof: eof = drainAvailable(p.outputHandle, outBuf, outTotal, maxOutputBytes)
@@ -100,13 +86,21 @@ proc runCompile*(
         break
       if getMonoTime() >= deadline:
         timedOut = true
-        try: p.kill() except CatchableError: discard
+        # Signal the whole process group (negative pid), not just the
+        # shell. SIGTERM first (graceful) — sending SIGKILL immediately
+        # and only falling back to SIGTERM makes the "grace period"
+        # pointless, since SIGKILL can't be caught and a process still
+        # alive after it is either a zombie or stuck in uninterruptible
+        # I/O either way.
+        let pgid = Pid(-int(p.processID))
+        discard kill(pgid, SIGTERM)
         var grace = 500
         while grace > 0 and p.peekExitCode() == -1:
           if not eof: eof = drainAvailable(p.outputHandle, outBuf, outTotal, maxOutputBytes)
           sleep(25)
           grace -= 25
-        try: p.terminate() except CatchableError: discard
+        if p.peekExitCode() == -1:
+          discard kill(pgid, SIGKILL)
         break
       sleep(pollIntervalMs)
       if pollIntervalMs < 100:
@@ -122,12 +116,16 @@ proc runCompile*(
         break
       if getMonoTime() >= deadline:
         timedOut = true
-        try: p.kill() except CatchableError: discard
+        # SIGTERM first (graceful), SIGKILL only if it's still alive after
+        # the grace period — the reverse order made the grace period
+        # pointless, since a process can't be un-SIGKILLed.
+        try: p.terminate() except CatchableError: discard
         var grace = 500
         while grace > 0 and p.peekExitCode() == -1:
           sleep(25)
           grace -= 25
-        try: p.terminate() except CatchableError: discard
+        if p.peekExitCode() == -1:
+          try: p.kill() except CatchableError: discard
         break
       sleep(pollIntervalMs)
       if pollIntervalMs < 100:
@@ -165,4 +163,6 @@ proc runCompile*(
     stderr: if timedOut: "command timed out after " & $timeoutMs & "ms" else: "",
     durationMs: durationMs,
     errors: errors,
+    timedOut: timedOut,
+    truncated: outTotal > maxOutputBytes,
   )

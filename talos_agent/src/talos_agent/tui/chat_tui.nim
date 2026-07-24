@@ -65,7 +65,7 @@ proc renderFrame(ts: TuiState) =
   let statusY = h - 1
   ts.tb.setForegroundColor(ts.theme.statusBarFg)
   ts.tb.setBackgroundColor(ts.theme.statusBarBg)
-  ts.tb.write(0, statusY, ts.statusMsg & repeat(' ', w - ts.statusMsg.len))
+  ts.tb.write(0, statusY, ts.statusMsg & repeat(' ', max(0, w - ts.statusMsg.len)))
   ts.tb.resetAttributes()
 
   # Input bar (above status bar, variable height)
@@ -83,8 +83,12 @@ proc renderFrame(ts: TuiState) =
   # Streaming region (rendered after transcript if there's content)
   let streamHeight = ts.streaming.height()
   if streamHeight > 0:
-    ts.streaming.render(ts.tb, ts.theme, 0, transcriptHeight - streamHeight,
-                        w)
+    # Clamp to 0: a long streamed response with more wrapped lines than
+    # transcriptHeight would otherwise make this negative, and illwill's
+    # write() takes a Natural row — a negative offset raised a range-check
+    # Defect instead of just rendering from the top.
+    let streamY = max(0, transcriptHeight - streamHeight)
+    ts.streaming.render(ts.tb, ts.theme, 0, streamY, w)
 
   ts.tb.setCursorPos(0, statusY)  # cursor at status bar (invisible)
   ts.tb.display()

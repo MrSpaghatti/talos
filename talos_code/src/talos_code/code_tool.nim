@@ -28,16 +28,6 @@ proc clampOutput(s: string; cap: int): string =
   if s.len <= cap: s
   else: s[0 ..< cap] & "\n... [output truncated]"
 
-proc sandboxPath*(path: string; root: string): string =
-  ## Returns `path` if it is inside `root`, otherwise returns `root`.
-  ## Used as a last-ditch guard; callers should still validate before
-  ## passing paths to the harness.
-  let absPath = if path.startsWith('/'): path else: ""
-  let absRoot = if root.startsWith('/'): root else: ""
-  if absRoot.len > 0 and absPath.startsWith(absRoot):
-    return path
-  return root
-
 proc withinSandbox*(path, root: string): bool =
   ## True if `path` resolves to `root` itself or a location beneath it.
   ## Resolution follows symlinks and collapses `..`/`.` via resolvePathSafe,
@@ -53,11 +43,19 @@ proc withinSandbox*(path, root: string): bool =
   except CatchableError:
     result = false  # fail closed if the path cannot be resolved
 
-proc formatCompileResult(res: CompileResult): string =
+proc formatCompileResultForTool(res: CompileResult): string =
+  ## LLM-facing formatter: clamps stdout to keep tool output small. Named
+  ## distinctly from code_runner.formatCompileResult (the human-facing CLI
+  ## formatter) rather than shadowing it — the two serve different
+  ## purposes (clamped tool output vs. full CLI summary), but the previous
+  ## name collision made it easy to miss that this one used a stale
+  ## `exitCode == -1` proxy for "timed out" instead of the real
+  ## `res.timedOut`/`res.truncated` fields (now reliably populated by
+  ## runCompile).
   if res.success:
     return "Compiled successfully in " & $res.durationMs & "ms.\n" &
            "stdout:\n" & res.stdout
-  var lines = @[if res.exitCode == -1: "TIMEOUT or LAUNCH FAILURE"
+  var lines = @[if res.timedOut: "TIMEOUT or LAUNCH FAILURE"
                 else: "Compilation failed (exit " & $res.exitCode & ") in " &
                       $res.durationMs & "ms.\n"]
   if res.errors.len > 0:
@@ -69,6 +67,8 @@ proc formatCompileResult(res: CompileResult): string =
     lines.add "stdout:\n" & clampOutput(res.stdout, 4096)
   if res.stderr.len > 0:
     lines.add "stderr:\n" & res.stderr
+  if res.truncated:
+    lines.add "(output truncated)"
   lines.join("\n")
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ proc compileTool*(cfg: CodingHarnessConfig): Tool =
       return ToolResult(output: "no build command configured", isError: true)
     try:
       let res = runCompile(buildCmd, timeoutMs, maxOut)
-      return ToolResult(output: formatCompileResult(res), isError: not res.success)
+      return ToolResult(output: formatCompileResultForTool(res), isError: not res.success)
     except CatchableError as e:
       return ToolResult(output: "compile failed: " & e.msg, isError: true)
   result = newTool(
@@ -113,7 +113,7 @@ proc testTool*(cfg: CodingHarnessConfig): Tool =
       return ToolResult(output: "no test command configured", isError: true)
     try:
       let res = runCompile(testCmd, timeoutMs, maxOut)
-      return ToolResult(output: formatCompileResult(res), isError: not res.success)
+      return ToolResult(output: formatCompileResultForTool(res), isError: not res.success)
     except CatchableError as e:
       return ToolResult(output: "test failed: " & e.msg, isError: true)
   result = newTool(

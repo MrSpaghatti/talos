@@ -34,6 +34,7 @@ when defined(posix):
   import std/posix
 
 import talos_core/tool_registry
+import talos_core/posix_io
 
 const
   DefaultShellTimeoutMs* = 30_000
@@ -159,35 +160,6 @@ proc readAllAvailable(stream: Stream): string =
   except CatchableError:
     discard
 
-when defined(posix):
-  proc setNonBlocking(fd: FileHandle) =
-    ## Best-effort: put the pipe read end into non-blocking mode so we can
-    ## drain it without blocking the poll loop.
-    let flags = fcntl(fd.cint, F_GETFL)
-    if flags != -1:
-      discard fcntl(fd.cint, F_SETFL, flags or O_NONBLOCK)
-
-  proc drainAvailable(fd: FileHandle; buf: var string; total: var int;
-                      cap: int): bool =
-    ## Reads all bytes currently available on `fd` (a non-blocking pipe),
-    ## appending up to `cap` total bytes into `buf` and counting every byte
-    ## produced in `total`. Bytes past the cap are read and discarded so the
-    ## child process never blocks on a full pipe. Returns true once EOF is
-    ## reached (the write end has been closed).
-    var tmp {.noinit.}: array[8192, char]
-    while true:
-      let n = read(fd.cint, addr tmp[0], tmp.len)
-      if n == 0:
-        return true            # EOF: writer closed
-      if n < 0:
-        return false           # EAGAIN/EWOULDBLOCK (or error): nothing more now
-      total += n
-      if cap <= 0 or buf.len < cap:
-        let take = if cap <= 0: n else: min(n, cap - buf.len)
-        let oldLen = buf.len
-        buf.setLen(oldLen + take)
-        copyMem(addr buf[oldLen], addr tmp[0], take)
-
 proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
   ## Runs `cmd` via the configured shell with a timeout. Captures stdout
   ## and stderr separately. Does not consult the deny-list — see `runShell`.
@@ -236,6 +208,12 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
     # as a timeout with its output lost.
     setNonBlocking(process.outputHandle)
     setNonBlocking(process.errorHandle)
+    # Best-effort: put the child in its own process group so a timeout can
+    # signal the whole tree (e.g. a command that itself forks children)
+    # instead of just this one pid — matches compile.nim's runCompile,
+    # which had the identical gap. Narrow race if the child spawns its own
+    # children before this lands, but covers the common case.
+    discard setpgid(Pid(process.processID), Pid(0))
     var outEof, errEof = false
     var pollIntervalMs = 25
     while true:
@@ -245,14 +223,19 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
         break
       if getMonoTime() >= deadline:
         timedOut = true
-        try: process.kill() except CatchableError: discard
+        # Signal the whole process group. SIGTERM first (graceful) — the
+        # previous SIGKILL-then-SIGTERM order made the grace period
+        # pointless, since SIGKILL can't be caught.
+        let pgid = Pid(-int(process.processID))
+        discard kill(pgid, SIGTERM)
         var graceLeft = 500
         while graceLeft > 0 and process.peekExitCode() == -1:
           if not outEof: outEof = drainAvailable(process.outputHandle, outBuf, outTotal, cap)
           if not errEof: errEof = drainAvailable(process.errorHandle, errBuf, errTotal, cap)
           sleep(25)
           graceLeft -= 25
-        try: process.terminate() except CatchableError: discard
+        if process.peekExitCode() == -1:
+          discard kill(pgid, SIGKILL)
         break
       sleep(pollIntervalMs)
       if pollIntervalMs < 100:
@@ -272,12 +255,15 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
         break
       if getMonoTime() >= deadline:
         timedOut = true
-        try: process.kill() except CatchableError: discard
+        # SIGTERM first (graceful), SIGKILL only if still alive after the
+        # grace period — matches compile.nim's non-POSIX fallback.
+        try: process.terminate() except CatchableError: discard
         var graceLeft = 500
         while graceLeft > 0 and process.peekExitCode() == -1:
           sleep(25)
           graceLeft -= 25
-        try: process.terminate() except CatchableError: discard
+        if process.peekExitCode() == -1:
+          try: process.kill() except CatchableError: discard
         break
       sleep(pollIntervalMs)
       if pollIntervalMs < 100:

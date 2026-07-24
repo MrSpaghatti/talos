@@ -1,8 +1,8 @@
 # Talos Agent — Development Status
 
-**Last Updated**: July 22, 2026
+**Last Updated**: July 24, 2026
 **Project Path**: `/home/spag/talos`
-**Phase**: Phase 1+2 complete. Tasks 1, 2, 3, 4, & 8 (of 8) done. Onboarding fixes + deep-dive audit complete (2026-07-22).
+**Phase**: Phase 1+2 complete. Tasks 1, 2, 3, 4, 6, & 8 (of 8) done; Task 5 (Vector Memory) and Task 7 (MCP Streaming) remaining. Onboarding fixes + deep-dive audits complete (2026-07-22, 2026-07-24).
 
 ---
 
@@ -68,7 +68,7 @@ AI agent with:
 | Item | Status |
 |------|--------|
 | `make build` (core + agent + code) | ✅ Compiles (see SSL note below) |
-| `make test` (core + agent + code) | ✅ All 479 tests pass, 0 FAILED |
+| `make test` (core + agent + code) | ✅ All 518 tests pass, 0 FAILED |
 | `nim check` (core + agent) | ✅ No static analysis errors |
 | `.env` / `.env.example` | ✅ Configured |
 | `.gitignore` | ✅ Covers all build artifacts |
@@ -176,13 +176,13 @@ shutdown. Run individual tests with `nim c -r` to avoid the batch issue.
 |---------|-----------|-------|--------|
 | talos_core (Wave 1) | tconfig, tllm_client, ttoken_counter, tmemory | 126 | ✅ All pass |
 | talos_core (Wave 2) | ttool_registry, test_mock_server | 22 | ✅ All pass |
-| talos_core (Discord) | test_permission, test_file_*, test_rate_limit, test_thread_*, test_daemon_delegation, test_message_chunker, test_discord_*, test_e2e_discord | 149 | ✅ All pass |
+| talos_core (Discord) | test_permission, test_file_*, test_rate_limit, test_thread_*, test_daemon_delegation, test_message_chunker, test_discord_*, test_e2e_discord | 153 | ✅ All pass |
 | talos_core (MCP) | test_mcp_client, test_mcp_tool | 36 | ✅ All pass |
 | talos_core (Persona) | test_persona | 19 | ✅ All pass |
 | talos_core (Plan-Execute) | test_plan_executor | 35 | ✅ All pass |
 | talos_agent | tcli, tagent_loop, tintegration, tdelegate_tool, tweb_server, test_shell_tool, tbench | 98 | ✅ All pass |
 | talos_code | tcode_runner | 29 | ✅ All pass |
-| **Total** | **30 test files** | **514** | **✅ 0 FAILED** |
+| **Total** | **30 test files** | **518** | **✅ 0 FAILED** |
 
 ---
 
@@ -207,6 +207,11 @@ See [ROADMAP.md](ROADMAP.md) for the tracking table and execution order.
 5. **Task 6 — Plan-Execute Mode** — `plan_executor.nim` in `talos_core`,
    `--plan` flag on `talos_agent ask`, topological step execution with
    dependency tracking, failure handling, and final synthesis. 35 tests.
+   Audited and fixed: removed redundant `tools` param from `generatePlan`,
+   fixed double-print in streaming mode, fixed zero token logging for
+   synthesis, added `ToolNotFoundError` guard, added real-time step
+   status display via `stepCallback`, hardened `topoSort` with `PlanError`
+   and O(1) queue.
 6. **Task 8 — Advanced TUI** — illwill-based fullscreen terminal UI with
    scrollable transcript, streaming rendering, multi-line input with history.
 

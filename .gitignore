@@ -46,7 +46,6 @@ talos_core/tests/test_rate_limit
 talos_core/tests/test_thread_mapping
 talos_core/tests/test_thread_reconnection
 talos_code/src/talos_code/talos_code
-talos_code/src/talos_code/mercury_code
 talos_code/tcode_runner
 talos_code/tests/tcode_runner
 talos_core/tests/mock_server

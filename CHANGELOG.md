@@ -8,6 +8,113 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed — 2026-07-24 audit remediation
+
+- **File-access sandbox (`FileRules.sandboxDir`) is now reachable.**
+  Previously always hardcoded to `""` in `cmdDaemon` with no config path to
+  set it. Added `[discord.file_rules] sandbox_dir` / `TALOS_FILE_SANDBOX_DIR`.
+  Stays empty (no behavior change) unless explicitly set — this is an
+  opt-in knob, not a default-on restriction.
+- **`delegate`'s Discord-mode shell inconsistency removed.** `cmdDaemon`
+  never registered the shell tool at the top level "for security," but
+  `delegate`'s child agents got it unconditionally anyway, making the
+  restriction meaningless. Rather than closing that gap, the top-level
+  restriction was removed (this is a solo, whitelist-only daemon) so
+  behavior is consistent and the stale comment no longer claims something
+  untrue.
+- **`file_write` was permission-dead for every user, including admins.**
+  `fileWriteTool` checked a hardcoded empty-string caller ID. Real caller
+  identity is now threaded through `AgentRequest` → `AgentConfig.callerId`
+  → a reserved `_callerId` key injected into tool args by
+  `agent_loop.executeToolCall`.
+- **Path pattern matching didn't escape regex metacharacters.** A deny
+  pattern like `id+rsa.txt` failed to match its own literal target because
+  `+` was read as a regex quantifier. Now escapes everything except glob
+  wildcards before compiling.
+- **Directory allow/deny patterns (`logs/*`) matched via broken/loose
+  substring checks.** The absolute-path branch was dead code (produced an
+  unreachable literal `"//..."`); replaced with a real prefix/segment
+  match.
+- **`discord_types.nim`'s default file deny-list duplicated (and was
+  weaker than) `file_path_validator.mandatoryDenyPatterns`.** Now
+  references the shared list directly.
+- **`chunkMessage` could hang forever**, reachable at the *default*
+  `maxLen=1900` both real call sites use, when a fence-opening line left no
+  room after a flush. Now detects no-forward-progress and forces
+  termination.
+- **Uncatchable `AssertionDefect` on a malformed MCP `error` field.**
+  `mcp_client.nim` indexed into a JSON-RPC `error` value without checking
+  it was an object first.
+- **`parseHexInt` overflow silently desynced the SSE/chunked stream
+  parser** (`llm_client.nim`) instead of raising — a negative chunk size
+  from an oversized hex value skipped the read loop and consumed the next
+  real line as if it were a trailing CRLF.
+- **`plan_executor.executePlan` segfaulted on a `nil` tool registry**
+  instead of failing the step gracefully; added the same guard
+  `agent_loop.executeToolCall` already had.
+- **`plan_executor.executePlan` raised an uncaught FK-constraint `DbError`
+  when resuming a session with no row yet.** Added the same
+  `memory.ensureSession` call `agent_loop.runAgentLoop` already makes.
+- **`cmdDaemon` double-closed SQLite handles on a crash** — both the
+  `except` branch and `finally` closed `threadDb`/`mem`. `finally` alone
+  now owns cleanup.
+- **`memory.newSession` had no collision handling** if `generateSessionId`
+  ever repeated (uncaught `UNIQUE constraint` `DbError`). Now retries with
+  a disambiguating suffix.
+- **Four TUI crash bugs** in `chat_tui.nim`/`input_bar.nim`/`transcript.nim`:
+  a narrow-terminal status bar and a long-streamed-response render both hit
+  negative offsets on illwill's `Natural`-typed write; cursor positioning
+  and line wrapping mixed byte counts with rune counts, corrupting or
+  crashing on non-ASCII input. Wrapping now operates on rune boundaries and
+  offsets are clamped.
+- **`registerMcpServer` leaked an `HttpClient` and inflated its reported
+  tool count** on partial registration failure — `result` tracked "tools
+  discovered" rather than "tools actually registered." `registerMcpTools`
+  now returns only what it actually registered.
+- **LLM streaming path required exactly HTTP 200**; non-streaming already
+  accepted the full 2xx range. Now consistent.
+- **Delegation depth reset at every hop** instead of being a real
+  chain-wide bound — two personas delegating back and forth could recurse
+  far past any single `maxDepth`. `applyPersonaDelegation` now takes the
+  parent's remaining depth into account.
+- **`CompileResult.timedOut`/`.truncated` were declared but never set** by
+  `runCompile`, so `code_runner.formatCompileResult` never actually
+  reported "TIMEOUT"/"TRUNCATED" through that path.
+- **Timeout only killed the direct child process, not its process tree**
+  (`compile.nim`, `shell.nim`) — a hung compiled-and-run binary outlived
+  "TIMEOUT." Both now start the child in its own process group and signal
+  the group; kill order also fixed to SIGTERM-then-SIGKILL (was backwards).
+- **Deleted the broken, unused `sandboxPath` helper** in `code_tool.nim`
+  (no symlink/`..` resolution, sibling-directory bypass) that sat next to
+  the correct `withinSandbox` and was never called anywhere.
+- **`rate_limit.nim`'s exponential backoff had no overflow cap**, unlike
+  the equivalent in `llm_client.chatCompletion`. Now capped identically.
+- **`plan_executor.markDependentsSkipped` still used `toProcess.delete(0)`**
+  (O(n) per dequeue) after the sibling `topoSort` was already fixed to use
+  a head-pointer. Now consistent.
+
+### Changed — 2026-07-24 cleanup
+
+- `config.validate()` now range-checks `webPort` (1–65535), consistent
+  with every other numeric field.
+- Removed the unreachable `risk == riskNone` branch in `permission.nim`
+  (`getToolRisk` never returns `riskNone`).
+- Renamed `code_tool.nim`'s local `formatCompileResult` to
+  `formatCompileResultForTool` instead of shadowing
+  `code_runner.formatCompileResult` — the name collision was exactly how
+  its stale `exitCode == -1` timeout proxy went unnoticed; it now reads
+  `res.timedOut`/`res.truncated` directly.
+- Deduplicated the `setNonBlocking`/`drainAvailable` POSIX pipe-draining
+  helpers, previously copy-pasted in both `compile.nim` and `shell.nim`,
+  into a new shared `talos_core/posix_io` module.
+- Removed the stale `mercury_code` entry from `.gitignore`.
+- Refreshed stale doc claims in `README.md`/`ROADMAP.md`/`STATUS.md`: MCP
+  support, sub-agent delegation, the Web UI, and the TUI are all shipped
+  (previously some still marked "planned" or omitted entirely); test counts
+  corrected to 518 (were self-contradictory — a stale "479" header next to
+  an accurate 514-entry table in both files); `tcode_runner`'s count
+  corrected (23 → 29).
+
 ### Added — 2026-07-22 Task 6: Plan-Execute Mode
 
 - **`plan_executor.nim`** (new module in `talos_core`). An alternative to
@@ -25,6 +132,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   topological sort (chains, diamonds, cycles), plan generation via mock
   LLM, plan execution with tool calls and reasoning steps, failure
   handling, statistics tracking, and formatting. Total: 514 tests.
+
+### Fixed — 2026-07-22 Task 6 deep-dive audit
+
+- **`generatePlan` passed OpenAI `tools` parameter.** The function-calling
+  `tools` field could cause real LLMs to respond with `tool_calls` instead
+  of a JSON plan, producing a confusing "empty plan response" error. The
+  system prompt already lists tool names as text; the `tools` param is
+  redundant and has been removed.
+- **Double-printing final answer in streaming mode.** When `--plan` was
+  used without `--no-stream`, the synthesis answer was streamed token-by-
+  token and then printed again by `stdout.writeLine`. Now only a trailing
+  newline is emitted in streaming mode.
+- **Final synthesis logged zero token usage to memory.** `executePlan`
+  hardcoded `tokensIn = 0, tokensOut = 0` for the synthesis message. Now
+  uses the actual `resp.usage` values, consistent with reasoning-step logging.
+- **`executePlan` didn't catch `ToolNotFoundError`.** If a plan referenced
+  an unregistered tool, `registry.execute` raised `ToolNotFoundError`,
+  aborting the entire plan. Now wrapped in try/except — the step is marked
+  failed and dependents are skipped.
+- **`topoSort` raised `KeyError` on invalid dependencies.** Direct callers
+  (bypassing `parsePlan`) could trigger a raw `KeyError`. Now raises
+  `PlanError` with a descriptive message.
+- **`topoSort` used O(n) queue deletion.** `queue.delete(0)` shifts all
+  elements. Replaced with an index pointer for O(1) dequeue.
+- **Real-time step status display added.** `executePlan` now accepts an
+  optional `stepCallback` invoked after each step completes (or is
+  skipped). The CLI uses this to print `✓`/`✗`/`→` status lines during
+  execution, matching the task spec.
 
 ### Fixed — 2026-07-22 onboarding + deep-dive audit
 

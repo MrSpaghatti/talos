@@ -60,21 +60,25 @@ talos/
 │   ├── src/            # config, llm_client, memory,
 │   │                   # tool_registry, token_counter,
 │   │                   # agent_loop.nim (ReAct loop),
+│   │                   # plan_executor (plan-execute mode),
 │   │                   # discord.nim (DI bot),
 │   │                   # discord_bridge, discord_commands,
 │   │                   # discord_types, discord_mocks,
 │   │                   # agent_dispatcher, permission,
 │   │                   # file_path_validator, file_tool,
 │   │                   # message_chunker, rate_limit,
-│   │                   # thread_mapping, build_llm_client
+│   │                   # thread_mapping, build_llm_client,
+│   │                   # mcp_client, mcp_tool (MCP bridge),
+│   │                   # delegate, persona (sub-agent delegation)
 │   └── tests/          # 20+ test files covering all modules
 ├── talos_agent/      # CLI binary (talos_agent.nim,
-│   ├── src/            # tools/shell.nim)
-│   └── tests/          # tagent_loop, tcli, tintegration, test_shell_tool
+│   ├── src/            # tools/shell.nim, web_server.nim, tui/)
+│   └── tests/          # tagent_loop, tcli, tintegration, tdelegate_tool,
+│                       # tweb_server, test_shell_tool, tbench
 ├── talos_code/       # autonomous coding harness binary
 │   ├── src/            # talos_code.nim, code_runner.nim,
 │   │                   # code_tool.nim, compile.nim, config.nims
-│   └── tests/          # tcode_runner (23 tests)
+│   └── tests/          # tcode_runner (29 tests)
 ├── Makefile
 ├── STATUS.md           # current state of the project
 ├── AUDIT_REPORT.md     # deep dive audit report and next steps
@@ -134,6 +138,9 @@ db_path = "~/.local/share/talos/talos.db"
 # Interactive chat
 ./talos_agent/talos_agent chat
 
+# Fullscreen TUI (scrollable transcript, streaming, history)
+./talos_agent/talos_agent tui
+
 # List recent sessions
 ./talos_agent/talos_agent history
 
@@ -160,6 +167,8 @@ talos_agent <subcommand> [options]
 
 Subcommands:
   chat                    Interactive REPL.
+  tui                     Fullscreen terminal UI (scrollable transcript,
+                          streaming, multi-line input with history).
   ask <question>          Single-shot question.
   session <id>            Print history of a session and continue chatting
                           (new turns go to a new session).
@@ -382,9 +391,13 @@ Talos is currently **Phase 1 (Foundation) + Phase 2 (Discord) +
 | P0 | CI pipeline (GitHub Actions on Nim 2.0.8 + 2.2.2) | ✅ Complete |
 | P0 | Deep code audit (40+ source files, 312+ tests) | ✅ Complete |
 | P1 | `talos_code` — coding harness (compile, test, read_file, write_file) | ✅ Complete |
-| P2 | MCP support for external tool discovery | 🔜 Planned |
-| P2 | Sub-agent delegation for parallel work | 🔜 Planned |
-| P3 | Web UI (lightweight HTTP chat frontend) | 🔜 Planned |
+| P2 | MCP support for external tool discovery | ✅ Complete |
+| P2 | Sub-agent delegation for parallel work | ✅ Complete |
+| P3 | Web UI (lightweight HTTP chat frontend) | ✅ Complete |
+| — | Advanced TUI (fullscreen chat, streaming, history) | ✅ Complete |
+| P2 | Plan-execute mode (`ask --plan`) | ✅ Complete |
+| P2 | Vector memory | 🔜 Planned |
+| P2 | MCP streaming | 🔜 Planned |
 
 ## License
 

@@ -73,4 +73,5 @@ proc render*(region: var StreamingRegion; tb: var TerminalBuffer;
   tb.setForegroundColor(theme.assistantMsg)
   for i, line in region.current.lines:
     let row = y + i
+    if row < 0: continue
     tb.write(x, row, line)

@@ -197,7 +197,7 @@ talos_code.nim ──▶ agent_loop ──▶ build_llm_client ──▶ llm_cli
 
 ## Test Suite
 
-**388 tests pass** across 26 test files (261 core + 51 agent + 11 code), 0 FAILED.
+**518 tests pass** across 30 test files (391 core + 98 agent + 29 code), 0 FAILED.
 
 After any change, run `make test` from the project root. This builds and
 tests both packages, with proper exit-code propagation so CI or your local

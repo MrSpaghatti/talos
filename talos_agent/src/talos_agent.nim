@@ -289,6 +289,7 @@ proc makeDelegateExecuteProc*(): auto =
       persona.maxDelegationDepth,
       persona.maxDelegationsPerRun,
       persona.name,
+      parentMaxDepth = captured.delegationConfig.maxDepth,
     )
     # Inline resolveDbPath logic since it's defined later in the file.
     let rawPath = parentCfg.dbPath
@@ -613,12 +614,19 @@ proc cmdAsk*(
             if event.kind == sekContent and event.delta.len > 0:
               stdout.write(event.delta)
               stdout.flushFile()
-      planRes = executePlan(agentCfg, llm, reg, mem, userInput, executionPlan)
+      planRes = executePlan(agentCfg, llm, reg, mem, userInput, executionPlan,
+        stepCallback = proc(step: PlanStep) {.gcsafe, raises: [].} =
+          {.cast(raises: []).}:
+            stdout.writeLine(formatStepStatus(step))
+            stdout.flushFile())
     except PlanError as e:
       printError("Plan generation failed: " & e.msg); return 1
     except CatchableError as e:
       printError(e.msg); return 1
-    stdout.writeLine(planRes.finalAnswer)
+    if noStream:
+      stdout.writeLine(planRes.finalAnswer)
+    else:
+      stdout.write("\n"); stdout.flushFile()
     return 0
 
   # --- ReAct mode (default) ---
@@ -1086,16 +1094,19 @@ proc cmdDaemon*(
 
   # File tools — always available for safe Discord file access
   let fileRules = FileRules(
-    sandboxDir: "",
+    sandboxDir: cfg.discord.fileSandboxDir,
     allowPatterns: cfg.discord.fileRules.allow,
     askPatterns: @[],
     denyPatterns: cfg.discord.fileRules.deny,
   )
   reg.register(fileReadTool(fileRules))
-  reg.register(fileWriteTool(fileRules, cfg.discord, ""))
+  reg.register(fileWriteTool(fileRules, cfg.discord))
+
+  # Shell tool — available in Discord mode too (whitelist-only, solo-user
+  # daemon; delegate's child agents already had shell access regardless).
+  reg.register(shellTool())
 
   # Delegate + MCP tools — opt-in via daemonDelegation config flag.
-  # Never include the shell tool in Discord mode for security.
   if cfg.discord.daemonDelegation:
     # Set agent globals so the delegate tool can initialise.
     setGlobalLLMClient(llm)
@@ -1170,12 +1181,16 @@ proc cmdDaemon*(
 
   # Graceful shutdown handled by the setControlCHook above
   # Start the Discord bot (blocks until session ends or error)
+  # `finally` always runs on the way out of this try (normal return,
+  # exception, or the early `return 1` below), so it alone owns closing
+  # threadDb/mem — closing them again in `except` would double-close an
+  # already-closed SQLite handle (undefined behavior) on any crash that
+  # occurs while daemonShutdownRequested is still false, which is the
+  # common case for a real Discord/network exception mid-run.
   try:
     waitFor startDiscordBot(discord, bot)
   except CatchableError as e:
     printError("Daemon crashed: " & e.msg)
-    threadDb.close()
-    mem.close()
     return 1
   finally:
     if not daemonShutdownRequested:
