@@ -65,6 +65,8 @@ progress.md
 talos_core/tests/test_daemon_delegation
 talos_agent/tests/tbench
 talos_agent/tests/tweb_server
+talos_core/tests/test_plan_executor
+talos_agent/tests/ttui_streaming
 
 # Legacy Sisyphus config (opencode → oh-my-pi migration)
 .sisyphus.legacy/

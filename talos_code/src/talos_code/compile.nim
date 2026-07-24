@@ -45,7 +45,13 @@ proc runCompile*(
       # "nim c -r src/main.nim"), so it must be evaluated by the shell.
       # Without it, startProcess treats the entire string as one executable
       # name and every multi-word build/test command fails to launch.
-      options = {poUsePath, poStdErrToStdOut, poEvalCommand},
+      # poDaemon (POSIX): child becomes a process-group leader atomically at
+      # spawn (POSIX_SPAWN_SETPGROUP), so a timeout can signal the whole tree
+      # — e.g. the compiled-and-run binary a "nim c -r ..." command spawns as
+      # a grandchild. A post-hoc setpgid() cannot do this: under posix_spawn
+      # the child has already exec'd by the time startProcess returns, so
+      # setpgid fails with EACCES and the group kill silently signals nothing.
+      options = {poUsePath, poStdErrToStdOut, poEvalCommand, poDaemon},
     )
   except CatchableError:
     return CompileResult(
@@ -69,16 +75,6 @@ proc runCompile*(
 
   when defined(posix):
     setNonBlocking(p.outputHandle)
-    # Best-effort: put the child (the shell running `cmd`) in its own
-    # process group so a timeout can signal the whole tree — e.g. the
-    # actual compiled-and-run binary a "nim c -r ..." build command
-    # spawns as a grandchild — instead of just the shell. Without this,
-    # p.kill()/p.terminate() only ever signaled the shell's single pid, so
-    # a hung grandchild was reparented to init and kept running
-    # indefinitely after "TIMEOUT" was reported. There's a narrow race if
-    # the shell spawns its own children before this call lands, but it
-    # covers the common case with no extra dependency.
-    discard setpgid(Pid(p.processID), Pid(0))
     var eof = false
     while true:
       if not eof: eof = drainAvailable(p.outputHandle, outBuf, outTotal, maxOutputBytes)
@@ -92,15 +88,19 @@ proc runCompile*(
         # pointless, since SIGKILL can't be caught and a process still
         # alive after it is either a zombie or stuck in uninterruptible
         # I/O either way.
+        # Fall back to the direct pid if the group signal fails (e.g. the
+        # group is already gone) — never let both paths fail silently.
         let pgid = Pid(-int(p.processID))
-        discard kill(pgid, SIGTERM)
+        if kill(pgid, SIGTERM) != 0:
+          discard kill(Pid(p.processID), SIGTERM)
         var grace = 500
         while grace > 0 and p.peekExitCode() == -1:
           if not eof: eof = drainAvailable(p.outputHandle, outBuf, outTotal, maxOutputBytes)
           sleep(25)
           grace -= 25
         if p.peekExitCode() == -1:
-          discard kill(pgid, SIGKILL)
+          if kill(pgid, SIGKILL) != 0:
+            discard kill(Pid(p.processID), SIGKILL)
         break
       sleep(pollIntervalMs)
       if pollIntervalMs < 100:
@@ -135,9 +135,13 @@ proc runCompile*(
     outBuf = if rawOutput.len > maxOutputBytes: rawOutput[0 ..< maxOutputBytes]
              else: rawOutput
 
+  # Bounded wait: on the normal-exit path peekExitCode already reaped the
+  # child so this returns immediately; on the timeout path the 2s ceiling
+  # guarantees runCompile can never hang the caller even if the kill above
+  # failed (waitForExit SIGKILLs the direct child when its timeout expires).
   var exitCode = -1
   try:
-    exitCode = p.waitForExit()
+    exitCode = p.waitForExit(timeout = 2_000)
   except CatchableError:
     discard
 

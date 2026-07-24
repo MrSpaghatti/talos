@@ -68,7 +68,7 @@ AI agent with:
 | Item | Status |
 |------|--------|
 | `make build` (core + agent + code) | ✅ Compiles (see SSL note below) |
-| `make test` (core + agent + code) | ✅ All 518 tests pass, 0 FAILED |
+| `make test` (core + agent + code) | ✅ All 557 tests pass, 0 FAILED |
 | `nim check` (core + agent) | ✅ No static analysis errors |
 | `.env` / `.env.example` | ✅ Configured |
 | `.gitignore` | ✅ Covers all build artifacts |
@@ -174,15 +174,15 @@ shutdown. Run individual tests with `nim c -r` to avoid the batch issue.
 
 | Package | Test files | Tests | Status |
 |---------|-----------|-------|--------|
-| talos_core (Wave 1) | tconfig, tllm_client, ttoken_counter, tmemory | 126 | ✅ All pass |
+| talos_core (Wave 1) | tconfig, tllm_client, ttoken_counter, tmemory | 134 | ✅ All pass |
 | talos_core (Wave 2) | ttool_registry, test_mock_server | 22 | ✅ All pass |
 | talos_core (Discord) | test_permission, test_file_*, test_rate_limit, test_thread_*, test_daemon_delegation, test_message_chunker, test_discord_*, test_e2e_discord | 153 | ✅ All pass |
-| talos_core (MCP) | test_mcp_client, test_mcp_tool | 36 | ✅ All pass |
-| talos_core (Persona) | test_persona | 19 | ✅ All pass |
+| talos_core (MCP) | test_mcp_client, test_mcp_tool | 46 | ✅ All pass |
+| talos_core (Persona) | test_persona | 22 | ✅ All pass |
 | talos_core (Plan-Execute) | test_plan_executor | 35 | ✅ All pass |
-| talos_agent | tcli, tagent_loop, tintegration, tdelegate_tool, tweb_server, test_shell_tool, tbench | 98 | ✅ All pass |
-| talos_code | tcode_runner | 29 | ✅ All pass |
-| **Total** | **30 test files** | **518** | **✅ 0 FAILED** |
+| talos_agent | tcli, tagent_loop, tintegration, tdelegate_tool, tweb_server, test_shell_tool, tbench, ttui_streaming | 113 | ✅ All pass |
+| talos_code | tcode_runner | 32 | ✅ All pass |
+| **Total** | **31 test files** | **557** | **✅ 0 FAILED** |
 
 ---
 

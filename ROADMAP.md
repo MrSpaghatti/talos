@@ -1,7 +1,7 @@
 # Talos Agent — Project Roadmap
 
 **Last updated**: July 24, 2026
-**Current state**: All planned phases complete (518 tests, CI green on Nim 2.0.8 + 2.2.2). 7 long-horizon tasks — 5 done, 2 remaining (Task 5 Vector Memory, Task 7 MCP Streaming).
+**Current state**: All planned phases complete (557 tests, CI green on Nim 2.0.8 + 2.2.2). 7 long-horizon tasks — 5 done, 2 remaining (Task 5 Vector Memory, Task 7 MCP Streaming).
 
 ---
 
@@ -46,7 +46,7 @@ Detailed implementation specs in `plans/task-*.md`. Recommended execution order:
 
 | Package | Test Files | Tests | Status |
 |---------|-----------|-------|--------|
-| talos_core | 22 | 391 | ✅ All pass |
-| talos_agent | 7 | 98 | ✅ All pass |
-| talos_code | 1 | 29 | ✅ All pass |
-| **Total** | **30** | **518** | **✅ 0 FAILED** |
+| talos_core | 22 | 412 | ✅ All pass |
+| talos_agent | 8 | 113 | ✅ All pass |
+| talos_code | 1 | 32 | ✅ All pass |
+| **Total** | **31** | **557** | **✅ 0 FAILED** |

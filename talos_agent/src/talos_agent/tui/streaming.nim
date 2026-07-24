@@ -5,7 +5,7 @@
 ## completes (tool call or finish), the block is "frozen" into the
 ## transcript and a new streaming region starts.
 
-import std/[strutils]
+import std/[strutils, unicode]
 import illwill
 import theme
 
@@ -23,21 +23,37 @@ proc newStreamingRegion*(w: int): StreamingRegion =
   StreamingRegion(width: max(w, 1))
 
 proc wordWrap(text: string; maxWidth: int): seq[string] =
+  ## Rune-aware word wrap with a hard-wrap fallback for over-long,
+  ## space-free words (long URLs, CJK runs). Comparing byte counts against
+  ## a column width — as the sibling TUI regions did before their rune
+  ## fixes — systematically over-wraps any non-ASCII streamed text and a
+  ## single long word used to be emitted as one overflowing line.
   let width = if maxWidth < 1: 1 else: maxWidth
   if text.len == 0: return @[""]
   var lines: seq[string] = @[]
-  var curLine = ""
-  for word in text.split(' '):
-    if curLine.len == 0:
-      curLine = word
-    elif curLine.len + 1 + word.len <= width:
-      curLine.add(' ')
-      curLine.add(word)
-    else:
-      lines.add(curLine)
-      curLine = word
-  if curLine.len > 0 or lines.len == 0:
-    lines.add(curLine)
+  for rawLine in text.split('\n'):
+    var curLine: seq[Rune] = @[]
+    var lineHasContent = false
+    for word in rawLine.split(' '):
+      var w = toRunes(word)
+      # Hard-wrap anything wider than the terminal on its own.
+      while w.len > width:
+        if lineHasContent:
+          lines.add($curLine)
+          curLine = @[]
+          lineHasContent = false
+        lines.add($w[0 ..< width])
+        w = w[width .. ^1]
+      if not lineHasContent:
+        curLine = w
+        lineHasContent = true
+      elif curLine.len + 1 + w.len <= width:
+        curLine.add(Rune(' '))
+        curLine.add(w)
+      else:
+        lines.add($curLine)
+        curLine = w
+    lines.add($curLine)
   lines
 
 proc append*(region: var StreamingRegion; token: string) =

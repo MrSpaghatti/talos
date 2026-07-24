@@ -1,7 +1,7 @@
 ## Tests for the code runner module.
 ## Covers CompileResult formatting, error parsing, and CodingHarnessConfig defaults.
 
-import std/[unittest, strutils, json, os]
+import std/[unittest, strutils, json, monotimes, os, times]
 
 import talos_code/code_runner
 import talos_code/code_tool
@@ -46,13 +46,23 @@ suite "formatCompileResult":
     let formatted = formatCompileResult(res)
     check: "✗ TIMEOUT" in formatted
 
-  test "truncated output":
+  test "truncated output on a failed build":
     let veryLong = "x".repeat(500)
     let res = CompileResult(success: false, exitCode: 1, stdout: veryLong,
                              stderr: veryLong, durationMs: 100,
                              errors: @[], truncated: true)
     let formatted = formatCompileResult(res)
-    check: "✗ TRUNCATED" in formatted
+    check: "✗ BUILD FAILED (output truncated)" in formatted
+
+  test "successful build with truncated output is still a success":
+    # Regression guard: success and truncated are independent flags set by
+    # runCompile; the old priority chain reported this as "✗ TRUNCATED".
+    let res = CompileResult(success: true, exitCode: 0, stdout: "lots",
+                             stderr: "", durationMs: 100,
+                             errors: @[], truncated: true)
+    let formatted = formatCompileResult(res)
+    check: "✓ BUILD SUCCEEDED (output truncated)" in formatted
+    check: "✗" notin formatted
 
 # ---------------------------------------------------------------------------
 # Error parsing
@@ -266,6 +276,27 @@ suite "runCompile execution":
     check: not res.success
     check: res.exitCode == 2
     check: "boom" in res.stdout
+
+  test "timeout actually kills and returns promptly":
+    # Regression guard: asserts wall-clock time, not just the timedOut flag.
+    # The setpgid-after-spawn version reported timedOut=true but never
+    # delivered a signal, so this call took the full 5s.
+    let t0 = getMonoTime()
+    let res = runCompile("sleep 5", timeoutMs = 200)
+    let elapsedMs = (getMonoTime() - t0).inMilliseconds
+    check: res.timedOut
+    check: not res.success
+    check: elapsedMs < 2_000
+
+  test "timeout kills the whole process tree, not just the shell":
+    # A grandchild (the compiled-and-run binary in a real "nim c -r" build)
+    # must not survive the kill and keep running after TIMEOUT is reported.
+    let marker = getTempDir() / "talos_compile_tree_kill_" & $getMonoTime().ticks
+    defer: removeFile(marker)
+    let res = runCompile("sh -c 'sleep 2; touch " & marker & "'", timeoutMs = 200)
+    check: res.timedOut
+    sleep(2_300)
+    check: not fileExists(marker)
 
   test "large output does not deadlock and is captured up to the cap":
     # More than one pipe buffer; before the incremental drain this hung

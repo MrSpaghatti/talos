@@ -241,14 +241,23 @@ proc parseNimErrors*(raw: string; defaultFile: string): seq[CompileError] =
 
 proc formatCompileResult*(res: CompileResult): string =
   ## Formats a CompileResult into a human-readable summary string.
+  ##
+  ## `success` and `truncated` are independent flags, not a priority
+  ## chain: a build that exits 0 with output exceeding maxOutputBytes is
+  ## both at once, and must read as a success with a truncation note —
+  ## not as "✗ TRUNCATED". Only timedOut implies failure by itself.
   if res.timedOut:
     result = "✗ TIMEOUT\n"
-  elif res.truncated:
-    result = "✗ TRUNCATED\n"
   elif res.success:
-    result = "✓ BUILD SUCCEEDED\n"
+    result = "✓ BUILD SUCCEEDED"
+    if res.truncated:
+      result.add " (output truncated)"
+    result.add "\n"
   else:
-    result = "✗ BUILD FAILED\n"
+    result = "✗ BUILD FAILED"
+    if res.truncated:
+      result.add " (output truncated)"
+    result.add "\n"
 
   if res.stdout.len > 0:
     result.add res.stdout

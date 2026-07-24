@@ -35,6 +35,8 @@ when defined(posix):
 
 import talos_core/tool_registry
 import talos_core/posix_io
+import talos_core/discord_types
+import talos_core/permission
 
 const
   DefaultShellTimeoutMs* = 30_000
@@ -167,7 +169,12 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
   var process: Process
   try:
     var args = @["-c", cmd]
-    var procOpts: set[ProcessOption] = {poUsePath}
+    # poDaemon (POSIX): child becomes a process-group leader atomically at
+    # spawn (POSIX_SPAWN_SETPGROUP), so a timeout can signal the whole tree.
+    # A post-hoc setpgid() cannot do this: under posix_spawn the child has
+    # already exec'd by the time startProcess returns, so setpgid fails with
+    # EACCES and the group kill silently signals nothing.
+    var procOpts: set[ProcessOption] = {poUsePath, poDaemon}
     process = startProcess(
       command = opts.shellPath,
       workingDir = opts.workingDir,
@@ -208,12 +215,6 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
     # as a timeout with its output lost.
     setNonBlocking(process.outputHandle)
     setNonBlocking(process.errorHandle)
-    # Best-effort: put the child in its own process group so a timeout can
-    # signal the whole tree (e.g. a command that itself forks children)
-    # instead of just this one pid — matches compile.nim's runCompile,
-    # which had the identical gap. Narrow race if the child spawns its own
-    # children before this lands, but covers the common case.
-    discard setpgid(Pid(process.processID), Pid(0))
     var outEof, errEof = false
     var pollIntervalMs = 25
     while true:
@@ -226,8 +227,11 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
         # Signal the whole process group. SIGTERM first (graceful) — the
         # previous SIGKILL-then-SIGTERM order made the grace period
         # pointless, since SIGKILL can't be caught.
+        # Fall back to the direct pid if the group signal fails (e.g. the
+        # group is already gone) — never let both paths fail silently.
         let pgid = Pid(-int(process.processID))
-        discard kill(pgid, SIGTERM)
+        if kill(pgid, SIGTERM) != 0:
+          discard kill(Pid(process.processID), SIGTERM)
         var graceLeft = 500
         while graceLeft > 0 and process.peekExitCode() == -1:
           if not outEof: outEof = drainAvailable(process.outputHandle, outBuf, outTotal, cap)
@@ -235,7 +239,8 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
           sleep(25)
           graceLeft -= 25
         if process.peekExitCode() == -1:
-          discard kill(pgid, SIGKILL)
+          if kill(pgid, SIGKILL) != 0:
+            discard kill(Pid(process.processID), SIGKILL)
         break
       sleep(pollIntervalMs)
       if pollIntervalMs < 100:
@@ -275,9 +280,13 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
     outBuf = if cap > 0 and outRaw.len > cap: outRaw[0 ..< cap] else: outRaw
     errBuf = if cap > 0 and errRaw.len > cap: errRaw[0 ..< cap] else: errRaw
 
+  # Bounded wait: on the normal-exit path peekExitCode already reaped the
+  # child so this returns immediately; on the timeout path the 2s ceiling
+  # guarantees runShellRaw can never hang the caller even if the kill above
+  # failed (waitForExit SIGKILLs the direct child when its timeout expires).
   var exitCode = 0
   try:
-    exitCode = process.waitForExit()
+    exitCode = process.waitForExit(timeout = 2_000)
   except CatchableError:
     exitCode = -1
 
@@ -422,4 +431,56 @@ proc shellTool*(opts: ShellOptions = defaultShellOptions()): Tool =
                   "per-call timeout.",
     parameters = shellParametersSchema(),
     execute = makeShellExecuteProc(opts),
+  )
+
+proc shellTool*(opts: ShellOptions, discordCfg: DiscordConfig): Tool =
+  ## Permission-gated variant for contexts with a real caller identity
+  ## (the Discord daemon and its delegation children). Reads the reserved
+  ## `_callerId` argument the agent loop injects into every tool call and
+  ## consults `canUseTool` before executing — mirroring fileWriteTool, so
+  ## the highest-risk tool is never gated more weakly than file_write and
+  ## `tools.deny = ["shell"]` actually denies.
+  ##
+  ## The ungated `shellTool(opts)` overload remains the right choice for
+  ## CLI/TUI/web use, where there is a single local operator and no
+  ## per-user identity to check (an empty `_callerId` here would fail
+  ## closed and disable the tool entirely).
+  let inner = makeShellExecuteProc(opts)
+  let cfg = discordCfg
+  let gated = proc (args: JsonNode): ToolResult {.gcsafe, raises: [].} =
+    let callerId =
+      if not args.isNil and args.kind == JObject: args{"_callerId"}.getStr("")
+      else: ""
+    let perm = try: canUseTool(callerId, "shell", cfg)
+               except CatchableError:
+                 return ToolResult(output: "shell: permission check failed",
+                                   isError: true, exitCode: -1)
+    case perm
+    of pdDeny:
+      return ToolResult(output: "shell: access denied for this user",
+                        isError: true, exitCode: -1)
+    of pdAsk:
+      return ToolResult(
+        output: "shell: requires approval — ask an admin, or add 'shell' " &
+                "to the tools allow-list",
+        isError: true, exitCode: -1)
+    of pdAllow:
+      try:
+        return inner(args)
+      except CatchableError as e:
+        return ToolResult(output: "shell: internal error: " & e.msg,
+                          isError: true, exitCode: -1)
+      except Defect as e:
+        return ToolResult(output: "shell: defect: " & e.msg,
+                          isError: true, exitCode: -1)
+      except Exception as e:
+        return ToolResult(output: "shell: internal error: " & e.msg,
+                          isError: true, exitCode: -1)
+  newTool(
+    name = "shell",
+    description = "Execute a shell command via /bin/sh -c. Returns stdout, " &
+                  "stderr, and exit code. Subject to a deny-list and a " &
+                  "per-call timeout.",
+    parameters = shellParametersSchema(),
+    execute = gated,
   )

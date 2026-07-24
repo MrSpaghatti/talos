@@ -613,3 +613,332 @@ approved fix plan — still open):
 - [ ] `tool_registry.nim` — `ToolExecuteProc`'s `{.gcsafe.}` alias isn't actually used by the types it's meant to describe.
 - [ ] `mcp_client.nim` — `jsonRpcResponseId` defined and tested but never called in production.
 - [ ] `persona.nim` — `applyPersonaDefaults`'s documented default only applies through the TOML-loader construction path.
+
+---
+
+# Audit Report — 2026-07-24, post-fix verification pass
+
+Follow-up audit run immediately after commit `6e26e6b` (the fix pass for
+the report above). Five parallel scouts: three verified specific fixes
+line-by-line against the current source (not the commit message), one
+fresh-swept files nobody had scrutinized yet and re-ran the full test
+suite, one did an adversarial re-dive on Discord/permissions. All findings
+verified by reading source or running code; two were confirmed by direct
+empirical reproduction. Documentation only — nothing below has been fixed
+yet.
+
+## Headline: the process-group timeout-kill fix is a regression — timeouts no longer work at all
+
+`compile.nim`/`shell.nim`'s fix for "timeout only kills the direct child, not
+the process tree" (previous report) replaced the old `p.kill()`/`p.terminate()`
+calls with `setpgid(Pid(p.processID), Pid(0))` followed by
+`kill(Pid(-int(p.processID)), SIGTERM/SIGKILL)`. This is **worse than what it
+replaced**, confirmed by direct reproduction:
+
+- Nim's `startProcess` uses `posix_spawn`/`posix_spawnp` with
+  `POSIX_SPAWN_USEVFORK` by default (no `-d:useFork` defined anywhere in this
+  repo) — vfork semantics mean the child has already called `execve()` by the
+  time `startProcess` returns control to the parent.
+- Per `setpgid(2)`, calling `setpgid` on a child that has already exec'd fails
+  with `EACCES`. Verified empirically: `setpgid rc=-1 errno=13 (EACCES)`.
+- The code does `discard setpgid(...)`, so this failure is silent. The
+  child's pgid never changes.
+- At timeout, `kill(Pid(-int(p.processID)), SIGTERM/SIGKILL)` then targets a
+  process group that doesn't exist → `ESRCH`, also silently discarded. **No
+  signal is ever delivered to anything.**
+- `waitForExit()` is called with no timeout argument (default blocks
+  forever), so execution just waits for the child to exit on its own.
+- Confirmed end-to-end: `runCompile("sleep 5", timeoutMs=200)` took
+  **5001ms** to return instead of ~700ms. Same result for `runShell` in
+  `shell.nim` (`timedOut=true` gets set, but the process runs to completion
+  regardless — `test_shell_tool.nim`'s existing timeout test only asserts
+  `exec.timedOut` and a stderr substring, never wall-clock time or exit
+  code, so it passes despite the process never actually being killed).
+
+Net effect: a genuinely hung `compile`/`test`/`shell` command (e.g. an
+infinite loop the agent itself writes) now hangs indefinitely instead of
+being killed at the configured timeout. Since the TUI runs the agent loop
+synchronously on its one thread, this hangs the entire TUI with no way to
+interrupt it via Ctrl+C. A real fix needs either: (a) `poDaemon` in
+`startProcess`'s `options` set, which sets `POSIX_SPAWN_SETPGROUP`
+atomically as part of the spawn itself (avoiding the racy post-hoc
+`setpgid`), or (b) checking `setpgid`'s return value and falling back to
+signaling `Pid(p.processID)` directly (not negated) when it fails, plus an
+explicit timeout passed to `waitForExit` as a backstop.
+
+## Headline: two other fixes from the same commit don't actually work
+
+- **`parseHexInt` overflow guard is incomplete.** The fix added `if size < 0:`
+  after `parseHexInt`, but overflow doesn't only produce negative numbers —
+  it wraps mod 2^64 and can land on a small positive value depending on the
+  input's bit pattern. Verified empirically:
+  `parseHexInt("10000000000000005") == 5`,
+  `parseHexInt("ABCD0000000000000064") == 100`. A chunk-size line like
+  `10000000000000005\r\n` sails past `size < 0` cleanly and desyncs the
+  parser exactly the way the fix's own comment says it's preventing — this
+  is `llm_client.nim`'s `BodyReader.fillMore`, not `mcp_client.nim` as the
+  original report mislabeled it.
+- **The MCP client-leak fix doesn't work, due to Nim's exception semantics.**
+  `registerMcpServer` does `result = registerMcpTools(reg, tools, client)`
+  inside a `try`. Verified by direct reproduction: when a Nim proc raises,
+  the assignment to the caller's `result` **never executes at all** — it
+  is not that a partial value leaks through, the assignment is skipped
+  entirely, and `result` keeps whatever it held before (here, `@[]` from
+  its initial value). So if `registerMcpTools` raises partway through
+  (tool 3 of 5 collides, having already called `reg.register()` for tools
+  1-2 as a side effect), `registerMcpServer`'s `result` is still `@[]`
+  when the `except` block runs, `if result.len == 0: client.http.close()`
+  still fires, and `client.http` gets closed while tools 1-2 are already
+  live in the registry holding closures over that now-closed client — the
+  identical bug the fix was meant to close, reintroduced by an
+  implementation that assumed exceptions can return partial values through
+  a `result =` assignment.
+
+## Errors (new bugs found)
+
+- **`talos_agent.nim:1107` / `shell.nim` — shell tool has zero permission
+  gating; a non-admin allowed user gets the same shell access as an admin.**
+  `shellTool()`'s execute closure never imports `permission`/`discord_types`,
+  never calls `canUseTool`, and never reads `cfg.discord.tools.allow/deny` —
+  it's called with zero config arguments at every registration site. The
+  only gate before it runs is the message-level `isUserAllowed()` check in
+  `discord.nim:73`, which doesn't distinguish `users.allow` from
+  `admins.allow`. Meanwhile `file_write` (a *lower*-risk tool per
+  `permission.getToolRisk`) is fully gated through `canUseTool` and is
+  de facto admin-only. Setting `discord.tools.deny = ["shell"]` in config
+  is a silent no-op since `canUseTool` is never invoked for this tool at
+  all. This is a real inconsistency with the intended risk model — the
+  discussed/accepted design was "shell exists in Discord mode," not "shell
+  has weaker gating than file_write."
+
+- **`talos_agent.nim` / `delegate.nim` — delegation budget is a single
+  global counter that never resets per request; permanently exhausts
+  across unrelated conversations.** `gGlobals.delegationConfig` is set
+  once at process startup (`cmdDaemon`/`cmdWeb`) and mutated in place by
+  `useDelegationSlot()` on every delegate call, for the life of the
+  process. `AgentConfig.delegation` is set fresh per request but is never
+  actually read anywhere in `agent_loop.nim` — the real gate the
+  `delegate` tool consults is the global. After as few as 2 delegations
+  total, ever, daemon-wide (default `maxDepth: 2`), `canDelegate()` returns
+  false for every future delegate call from any user in any thread until
+  the process is restarted, with no indication why beyond "maximum
+  delegation depth reached." Availability bug, not a security one, but
+  real and silent.
+
+- **`mcp_tool.nim` / `mcp_client.nim` — `_callerId` (injected for
+  permission checks) is forwarded verbatim to remote MCP servers.**
+  `agent_loop.executeToolCall` injects `_callerId` into args for *every*
+  tool, including MCP tools — `makeMcpToolExecuteProc`'s closure passes
+  that same JSON straight through to `callTool`, which puts it verbatim
+  into the JSON-RPC payload sent to the external server. This can fail
+  schema validation on strict servers, leaks caller identity (e.g. a real
+  Discord user id) to a third party never meant to see it, and can echo
+  back into the assistant's visible output if the remote tool reflects its
+  received arguments (common for debug/echo-style tools) — memory-logged
+  and fed back into the next turn's LLM context.
+
+- **`agent_loop.executeToolCall`'s `_callerId` injection doesn't reach
+  `plan_executor`'s tool-execution path at all.** `plan_executor.nim`
+  calls the string-argument `registry.execute(step.toolName,
+  step.toolArgs)` overload directly, which has no `callerId` parameter and
+  never injects anything. Currently dormant (the CLI's `--plan` registry
+  never registers `file_write`), but the fix's claim to cover "every
+  tool-call path" is incomplete.
+
+- **`mcp_client.nim` — the `.hasKey`-on-non-object `AssertionDefect` crash
+  was fixed in one spot, not the whole class.** The original report's
+  fix only guarded the `error`-field check inside `callMethod`. The
+  identical crash is still reachable via unguarded `.hasKey` calls in
+  `initialize()`, `listTools()` (twice), and `callTool()` (twice) — any of
+  these hit when a malformed/malicious server returns a non-object
+  `"result"` value (e.g. `{"result":"oops"}` in response to `tools/list`).
+
+- **`llm_client.nim` — the streaming SSE parser has the same unguarded
+  `.hasKey` crash, uncaught by its surrounding `try/except`.**
+  `chatCompletionStream`'s event loop calls `.hasKey` on `node`, `choice`,
+  and `tcNode` without checking `.kind == JObject` first, at multiple
+  points. The surrounding `except JsonParsingError: discard` only catches
+  JSON *syntax* errors, not `AssertionDefect` (which isn't a
+  `CatchableError`). The non-streaming path's `parseToolCalls` correctly
+  guards the equivalent case (`if tcNode.kind != JObject: continue`) —
+  this guard is missing from the streaming path. Also: `parseResponse`
+  (non-streaming) indexes `message.hasKey(...)` without checking
+  `message`'s kind, crashing on `{"message": null, ...}`.
+
+- **`llm_client.nim` — unbounded MCP/SSE chunk size causes eager
+  huge-buffer allocation (resource exhaustion).** `fillMore`'s only chunk-
+  size validation is `size < 0` — no upper bound. `Socket.recv(size, ...)`
+  calls `data.setLen(size)` before reading any bytes off the wire, so a
+  single crafted chunk-size header line (e.g. `100000000\r\n`, ~4GB in hex)
+  triggers an immediate multi-GB allocation attempt, independent of the
+  overflow-wrap bug above.
+
+- **`llm_client.nim` — `chatCompletionStream` doesn't wrap socket errors
+  into `NetworkError` like the non-streaming path does.** `doRequest`
+  explicitly catches `HttpRequestError`/`OSError`/`IOError` and re-raises
+  as `NetworkError`; the raw-socket streaming path has no equivalent —
+  `sock.connect` is unguarded and the whole SSE body-reading loop has no
+  try/except around socket recv calls, so a mid-stream connection drop
+  propagates as a raw, untyped exception instead of the `NetworkError`
+  type callers of this module expect.
+
+- **`persona.nim` — malformed `personas.toml` syntax errors are silently
+  discarded.** `loadPersonasFromStream`'s parser loop has
+  `of cfgOption, cfgError: discard` — a genuine syntax error (e.g. a
+  missing `=`) produces a `cfgError` event with a descriptive message, and
+  the code throws it away and keeps parsing. The affected key silently
+  never applies, with no warning anywhere. This is the same bug class as
+  the `.env`-parser issue already fixed elsewhere in this codebase
+  (config.nim now raises `ConfigError` on parse failure) — `persona.nim`
+  never got the analogous fix.
+
+- **`persona.nim` — a duplicate (case-insensitive) persona name crashes
+  the whole CLI with a raw, unhandled stack trace.** `registerPersona`
+  raises `PersonaError` on a duplicate name; none of the 7
+  `loadPersonasFile` call sites in `talos_agent.nim` wrap this in
+  try/except (unlike `ConfigError`, which does get a clean
+  `printError`+`return 2` treatment). Trigger: define `[personas.Foo]`
+  and `[personas.foo]` in the same file (case-insensitivity is
+  intentional).
+
+- **`code_runner.formatCompileResult` mislabels a successful-but-truncated
+  build as `✗ TRUNCATED`.** `timedOut`/`truncated`/`success` are checked
+  as a priority chain (`if timedOut ... elif truncated ... elif success`)
+  rather than independent flags, but `compile.nim` sets `success` and
+  `truncated` completely independently — a build that exits 0 with output
+  exceeding `maxOutputBytes` is `success=true, truncated=true`
+  simultaneously, and this function reports it as failed. Currently
+  unreachable in production (the actually-wired `formatCompileResultForTool`
+  checks `success` first and gets it right), but this function is
+  exported and unit-tested as if it were correct — the same "the
+  survivor of a rename still has the bug" pattern flagged in the previous
+  report about its sibling.
+
+- **`streaming.nim`'s `wordWrap` wasn't updated to rune-based wrapping,
+  inconsistent with the sibling TUI fixes in the same commit.** Still
+  compares UTF-8 byte counts against `width` (a column count) and
+  unconditionally assigns an over-long space-free "word" to one line with
+  no hard-wrap fallback. Not a crash, but a real visual regression for any
+  non-ASCII LLM streaming output (accented text, CJK, long URLs — all
+  routine).
+
+## Info / lower-severity, pre-existing (not introduced by the recent fixes)
+
+- `input_bar.nim`'s cursor rendering always computes screen position
+  relative to the *last* wrapped line, regardless of where the cursor
+  actually is — moving the cursor into an earlier wrapped segment (Left/
+  Home on wrapped multiline input) displays it at the wrong column.
+  Pre-existing (identical structure before the audited commit), not new.
+- `chat_tui.nim`'s input box has a hardcoded 3-row height but
+  `wrappedInputLines` can produce more; a 4+ line paste has its top row(s)
+  silently overwritten by the transcript region rendered afterward.
+  Pre-existing, not new.
+- `delegate.useDelegationSlot` decrements depth on every delegate call
+  including sibling (non-nested) ones, only ever making delegation more
+  restrictive than configured. Predates this commit, not a regression.
+- Re-verified path-traversal/symlink-escape properties from scratch when
+  `sandboxDir` is explicitly set (the opt-in mechanism) — still sound, no
+  new escape found.
+
+## Test suite status
+
+Fresh `make test` run: **518 `[OK]`, 0 `[FAILED]`**, matching the
+CHANGELOG's stated baseline exactly. ~30s cold-cache (vs. ~15s warm-cache
+previously cited) — fully explained by cold nimcache, not a regression.
+Same expected warnings as before (MERCURY_* deprecation fallbacks, one
+deliberate connection-refused test, one nimble `etf` version notice), no
+new ones. Notably: **0 failures despite the timeout-kill regression and
+the two incomplete fixes above** — none of the existing tests assert on
+wall-clock timeout behavior, actual process termination, or the specific
+chunk-size-overflow/exception-partial-return scenarios involved, so the
+suite passing is not evidence these are fine.
+
+## Verification ledger — fixes from 6e26e6b confirmed genuinely correct
+
+- Regex-metacharacter escaping in `matchPattern`/`globToRegex` — confirmed
+  correct, including against `escapeRe`'s actual per-character behavior.
+- Directory allow/deny pattern matching's absolute/relative split —
+  confirmed correct and confirmed reachable for operator-supplied
+  absolute patterns (dead code before, live and correct now).
+- `discord_types.nim` deny-list deduplication — confirmed correct, no
+  circular import, and confirmed to be a strict improvement over the old
+  default (which was largely inert for nested paths).
+- `file_tool.fileWriteTool` reading `_callerId` from args — confirmed
+  correct and fails closed (not open) on every currently-reachable path.
+- `delegate.applyPersonaDelegation`'s `parentMaxDepth` capture-before-
+  decrement ordering — confirmed correct, no off-by-one.
+- `chat_tui.nim`/`input_bar.nim`/`transcript.nim` rune-boundary and offset-
+  clamp fixes — confirmed correct via traced concrete multi-byte examples,
+  not just "doesn't crash."
+- `talos_core/posix_io.nim` extraction — confirmed byte-for-byte faithful,
+  no stale duplicate left in either caller.
+- `llm_client.nim` streaming-vs-non-streaming 2xx status check — confirmed
+  identical logic, not just similar intent.
+- `rate_limit.nim` backoff overflow cap — confirmed correct and
+  sufficient for realistic config values (both call sites fixed).
+- `mcp_client.nim` JSON-RPC `error`-field `AssertionDefect` guard —
+  confirmed correct for that specific site (see Errors above for the
+  same crash class elsewhere it doesn't cover).
+
+## Deferred-items sanity check (from the previous report's explicitly-deferred list)
+
+All confirmed STILL PRESENT AS DESCRIBED, re-verified against current
+source: `llm_client.nim` new `HttpClient` per retry; `compile.nim`
+(now `posix_io.nim`) `maxOutputBytes <= 0` meaning unlimited;
+`web_server.nim` blocking async handler and never-evicted `rateBuckets`;
+`permission.nim`'s `tools.allow` bypass; `discord_commands.nim`'s
+non-admin-gated `show`/`list` and no-op `token_env`; `talos_agent.nim`'s
+`{.cast(raises: []).}` pattern; `web_server.nim`'s redundant `parsePath`;
+`tool_registry.nim`'s unused `gcsafe` alias; `mcp_client.nim`'s unused
+`jsonRpcResponseId`; `persona.nim`'s `applyPersonaDefaults` footgun.
+
+---
+
+## Fix status — 2026-07-24 round-3 remediation (post-fix verification items)
+
+All items from the post-fix verification pass above were fixed same-day per
+PLAN_AUDIT_FIXES_R3.md. **557 tests pass, 0 failures** (baseline 518); every
+Phase 1 regression gained a test that fails against `6e26e6b`. Full details
+in CHANGELOG.md `[Unreleased]` "round 3".
+
+**Headline regressions & broken fixes — all fixed and empirically verified:**
+- [x] Timeout kill regression — `poDaemon` (atomic POSIX_SPAWN_SETPGROUP) +
+  direct-pid fallback + bounded `waitForExit(2000)` backstop, in both
+  compile.nim and shell.nim. Verified: 200ms timeout returns in ~250ms
+  (was 5001ms), grandchildren killed. Tests now assert wall-clock time and
+  process-tree death.
+- [x] MCP client-leak fix — redone with a `var` out-parameter so partial
+  registration progress survives the raise (`result =` never assigns when
+  the callee raises).
+- [x] parseHexInt overflow — redone as `parseChunkSize` with a length check
+  *before* parsing plus an 8 MiB cap (also closes the unbounded-allocation
+  finding).
+
+**Errors — all fixed:**
+- [x] Shell tool permission gating (gated `shellTool(opts, discordCfg)` +
+  `canUseTool` riskHigh admin fast-path; delegation children inherit the
+  caller identity and gated variant in Discord contexts). NOTE for the
+  operator: daemon shell now requires `admins.allow` membership or
+  `tools.allow = ["shell"]`.
+- [x] Delegation budget process-lifetime exhaustion (per-request reset at
+  all four top-level entry points via `resetDelegationBudget`).
+- [x] `_callerId` forwarded to MCP servers (`stripReservedArgs`, wire-level
+  test) + plan_executor injection gap documented at the call site.
+- [x] `.hasKey` AssertionDefect class — remaining sites in mcp_client
+  (callMethod now guarantees an object) and llm_client (streaming loop,
+  delta aggregation, parseResponse).
+- [x] Streaming socket errors wrapped as NetworkError (connect, header
+  read, body read).
+- [x] persona.toml cfgError silently discarded → raises PersonaError;
+  duplicate-name crash → clean CLI error via shared `loadPersonasSafe`.
+- [x] formatCompileResult success+truncated mislabeling.
+- [x] streaming.nim wordWrap byte-based → rune-aware with hard-wrap
+  fallback (new ttui_streaming test file).
+
+**Not addressed (unchanged from the report's own framing):**
+- [ ] input_bar.nim cursor-on-wrapped-lines rendering (pre-existing,
+  cosmetic, Phase 4 optional).
+- [ ] chat_tui.nim hardcoded 3-row input box overflow (pre-existing,
+  cosmetic, Phase 4 optional).
+- [ ] The 11 explicitly-deferred items from the previous round remain
+  deferred.

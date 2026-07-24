@@ -70,6 +70,10 @@ type
     rateBuckets: Table[string, RateLimitBucket]
     rateLimitMax*: int             ## overridable in tests; see newWebServer
     rateLimitWindowSeconds*: int
+    requestSetup*: proc() {.gcsafe, raises: [].}
+      ## Optional; called before each /api/chat agent run. Used to reset
+      ## per-request state living outside this module — e.g. the delegation
+      ## budget, which is otherwise a process-lifetime global.
 
   WebServerContext* = ref object
     ## Per-request context capturing the shared server state.
@@ -157,6 +161,8 @@ proc handleChat(ctx: WebServerContext; req: Request) {.async.} =
       await respondError(req, Http400, "message too large (>10KB)")
       return
 
+    if ctx.ws.requestSetup != nil:
+      ctx.ws.requestSetup()
     var agentCfg = newAgentConfig(ctx.ws.cfg)
     let res = runAgentLoop(
       agentCfg, ctx.ws.llm, ctx.ws.registry, ctx.ws.mem, message)

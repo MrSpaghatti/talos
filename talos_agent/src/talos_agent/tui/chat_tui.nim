@@ -38,6 +38,10 @@ type
     statusMsg*: string
     noStream*: bool
     currentSessionId*: string
+    requestSetup*: proc() {.gcsafe, raises: [].}
+      ## Optional; called before each agent turn. Used to reset per-turn
+      ## state living outside this module — e.g. the delegation budget,
+      ## which is otherwise a process-lifetime global.
 
 proc updateStatus(ts: TuiState) =
   ## Build status bar text from current state.
@@ -152,6 +156,8 @@ proc handleKey(ts: TuiState; key: Key) =
       ts.dirty = true
 proc runAgentTurn(ts: TuiState; userInput: string) =
   ## Run one turn of the agent loop and render results into the transcript.
+  if ts.requestSetup != nil:
+    ts.requestSetup()
   ts.transcript.addUser(userInput)
   ts.updateStatus()
   ts.dirty = true
@@ -202,7 +208,8 @@ proc runAgentTurn(ts: TuiState; userInput: string) =
   ts.updateStatus()
   ts.dirty = true
 proc runTui*(cfg: TalosConfig; llm: LLMClient; reg: ToolRegistry;
-             mem: Memory; noStream = false): int =
+             mem: Memory; noStream = false;
+             requestSetup: proc() {.gcsafe, raises: [].} = nil): int =
   ## Run the fullscreen TUI. Returns 0 on clean exit, 1 on error.
 
   if getEnv("TERM") == "dumb":
@@ -228,6 +235,7 @@ proc runTui*(cfg: TalosConfig; llm: LLMClient; reg: ToolRegistry;
     streaming: newStreamingRegion(w),
     currentSessionId: "",
     noStream: noStream,
+    requestSetup: requestSetup,
   )
   ts.updateStatus()
 

@@ -8,6 +8,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed — 2026-07-24 post-fix verification remediation (round 3)
+
+Fixes for everything the post-fix verification audit (AUDIT_REPORT.md,
+final section) found open, including three fixes from the previous round
+that turned out not to work. 557 tests pass (baseline 518); every
+regression below gained a test that fails against commit `6e26e6b`.
+
+- **Timeout kill regression (compile.nim, shell.nim) — timeouts now
+  actually kill.** The previous fix's post-spawn `setpgid` silently failed
+  with EACCES (the child has already exec'd under posix_spawn), the group
+  kill then hit ESRCH (also discarded), and the unbounded `waitForExit()`
+  blocked until the child exited on its own — `sleep 5` with a 200 ms
+  timeout took the full 5 s, and a hung build froze the TUI with no
+  Ctrl+C. Now: `poDaemon` makes the child a process-group leader
+  atomically at spawn (POSIX_SPAWN_SETPGROUP), the group signal falls back
+  to the direct pid if it fails, and the final `waitForExit(2000)` is a
+  bounded backstop that force-kills. Verified: 200 ms timeout returns in
+  ~250 ms and grandchildren are dead. New tests assert wall-clock time and
+  actual process-tree death — the old tests only checked the `timedOut`
+  flag, which is why the regression passed CI.
+- **MCP client-leak fix redone (mcp_tool.nim) — the previous fix didn't
+  work.** It assigned `result = registerMcpTools(...)`, but a `result =`
+  assignment never executes when the callee raises, so on a partial
+  registration failure `result` stayed empty and the shared `HttpClient`
+  was closed while already-registered tools still held closures over it —
+  the original bug, reintroduced. `registerMcpTools` now reports progress
+  through a `var` out-parameter, which survives the raise.
+- **Chunk-size overflow guard redone (llm_client.nim) — the previous fix
+  was incomplete.** `parseHexInt` wraps mod 2^64, so an oversized chunk
+  size line can land on a small *positive* value
+  (`parseHexInt("10000000000000005") == 5`) and sail past the `size < 0`
+  check, silently desyncing the stream. Extracted `parseChunkSize`: hex
+  length is checked *before* parsing, and an 8 MiB `MaxChunkSize` cap also
+  closes the eager multi-GB `setLen` allocation a crafted size line could
+  trigger inside `Socket.recv`.
+- **Shell tool is now permission-gated in daemon mode.** It previously
+  bypassed `canUseTool` entirely: `tools.deny = ["shell"]` was a silent
+  no-op and any whitelisted user had admin-equivalent shell — weaker
+  gating than the lower-risk `file_write`. A new `shellTool(opts,
+  discordCfg)` variant reads the injected `_callerId` and consults
+  `canUseTool`; `canUseTool` itself now allows riskHigh tools for admins
+  (previously pdAsk for everyone, which would have disabled shell outright
+  given there's no approval flow). Non-admin users get "requires approval";
+  `tools.allow`/`tools.deny` work as expected. Delegation children spawned
+  from a Discord context inherit the caller's identity and the gated
+  variant; CLI/TUI/web (single local operator, no identity) keep the
+  ungated tool by design. **Deployment note:** shell in Discord mode now
+  requires the caller to be in `admins.allow` (or `shell` in
+  `tools.allow`) — a user only in `users.allow` gets "requires approval".
+- **Delegation budget no longer exhausts process-wide.** The budget lived
+  in a global mutated by every delegate call and never reset: after as few
+  as 2 delegations, total, daemon-wide, every future `delegate` call from
+  any user failed until restart. Every top-level entry point (daemon
+  dispatch via a new `requestSetup` hook, web chat, CLI `runChatOnce`, TUI
+  turn) now resets the budget to its configured baseline per
+  request/turn.
+- **`_callerId` no longer leaks to remote MCP servers.** The reserved
+  permission-check key injected into every tool call was forwarded
+  verbatim in the JSON-RPC payload — leaking Discord user ids to third
+  parties, risking strict-schema rejections, and echoing back into LLM
+  context via reflective tools. Now stripped (`stripReservedArgs`) before
+  the wire; verified at the wire level in tests. Also documented that
+  `plan_executor`'s direct `registry.execute` path performs no injection.
+- **Remaining `.hasKey`-on-non-object `AssertionDefect` crashes fixed as a
+  class.** The previous round fixed one site; the same uncatchable-Defect
+  crash was still reachable in `mcp_client.nim` (`initialize`, `listTools`,
+  `callTool` — `callMethod` now guarantees an object response) and in
+  `llm_client.nim`'s streaming SSE loop, delta aggregation, and
+  `parseResponse` (`{"message": null}`). Malformed-response tests cover
+  each path.
+- **Streaming path socket errors are now typed.** `chatCompletionStream`'s
+  raw-socket connect/read path leaked raw `OSError`/`TimeoutError`/
+  `IOError` instead of the `NetworkError` the module's callers handle (the
+  non-streaming path already wrapped them).
+- **Malformed `personas.toml` no longer fails silently or crashes the
+  CLI.** Parser `cfgError` events (unclosed section, unterminated quote)
+  now raise `PersonaError` instead of being discarded (same fix class as
+  the earlier `.env` parser change), and all 7 CLI load sites go through
+  one `loadPersonasSafe` helper that prints a clean error and exits 2 —
+  previously a duplicate persona name produced a raw stack trace.
+- **`code_runner.formatCompileResult` no longer reports a successful
+  build with truncated output as `✗ TRUNCATED`.** `success` and
+  `truncated` are independent flags; truncation is now a note, not a
+  verdict.
+- **TUI streaming word wrap is rune-aware with a hard-wrap fallback**,
+  matching the sibling TUI fixes from the previous round: byte-vs-column
+  comparison over-wrapped all non-ASCII streamed text, and a space-free
+  word longer than the terminal (long URLs) overflowed on one line.
+
 ### Fixed — 2026-07-24 audit remediation
 
 - **File-access sandbox (`FileRules.sandboxDir`) is now reachable.**

@@ -21,3 +21,4 @@ task test, "Run all tests":
   exec "nim c --path:src --path:../talos_core/src --path:../talos_core/tests -r tests/tdelegate_tool.nim"
   exec "nim c --path:src --path:../talos_core/src --path:../talos_core/tests -r tests/tbench.nim"
   exec "nim c --path:src --path:../talos_core/src --path:../talos_core/tests --threads:on -r tests/tweb_server.nim"
+  exec "nim c --path:src --path:../talos_core/src --path:../talos_core/tests -r tests/ttui_streaming.nim"

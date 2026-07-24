@@ -148,6 +148,30 @@ suite "delegate: delegation limits":
     check result2.output.contains("maximum delegation depth") or
           result2.output.contains("maximum delegations per run")
 
+  test "resetDelegationBudget restores an exhausted budget for the next request":
+    # Regression guard: the budget is a process-wide global that
+    # useDelegationSlot decrements in place. Without a per-request reset,
+    # exhausting it once (as few as maxDepth delegations, total, ever)
+    # permanently disabled delegation for every future request from any
+    # user until the process restarted. Every top-level entry point
+    # (daemon dispatch, web chat, CLI/TUI turn) now calls
+    # resetDelegationBudget before running the agent loop.
+    resetGlobals()
+    initGlobals(maxDepth = 1, maxDelegations = 1)
+    let exec = makeDelegateExecuteProc()
+    discard exec(%*{"persona": "test", "task": "first request's delegation"})
+    # Budget exhausted mid-"request": further delegate calls fail...
+    let exhausted = exec(%*{"persona": "test", "task": "still same request"})
+    check exhausted.isError
+    # ...but the next top-level request starts with a fresh baseline.
+    resetDelegationBudget()
+    check gGlobals.delegationConfig.canDelegate()
+    let nextRequest = exec(%*{"persona": "test", "task": "next request"})
+    # Passes the delegation-limit guard again (fails later at memory-open
+    # in this unit-test setup, same as the first call — that's fine).
+    check not (nextRequest.output.contains("maximum delegation depth") or
+               nextRequest.output.contains("maximum delegations per run"))
+
 suite "delegate: tool registration":
   test "buildRegistry includes delegate when globals are set":
     resetGlobals()

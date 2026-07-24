@@ -172,6 +172,17 @@ proc setTalosConfig*(cfg: TalosConfig) =
   else:
     gGlobals.talosConfig = cfg
 
+proc resetDelegationBudget*() {.gcsafe, raises: [].} =
+  ## Restores the delegation budget to its configured baseline. Must be
+  ## called at the start of every top-level request/turn (daemon message,
+  ## web chat, CLI/TUI turn): the delegate tool consumes budget from the
+  ## process-wide global, which otherwise never resets — after maxDepth
+  ## delegations total, daemon-wide, every later delegate call from any
+  ## user in any thread fails with "maximum delegation depth reached"
+  ## until the process restarts.
+  {.cast(gcsafe), cast(raises: []).}:
+    setDelegationConfig(defaultDelegationConfig())
+
 # ---------------------------------------------------------------------------
 # Delegate tool
 # ---------------------------------------------------------------------------
@@ -315,7 +326,19 @@ proc makeDelegateExecuteProc*(): auto =
     gGlobals.delegationConfig = childCfg.delegation
     defer: gGlobals.delegationConfig = savedDc
     var childReg = newToolRegistry()
-    childReg.register(shellTool())
+    # Propagate the caller's identity into the child so its tool calls are
+    # gated for the same user (the agent loop injects childCfg.callerId as
+    # `_callerId` into every child tool call). A non-empty _callerId means
+    # a Discord-daemon context: give the child the permission-gated shell.
+    # An empty one means CLI/TUI, where the ungated shell is intentional.
+    let delegCallerId =
+      if not args.isNil and args.kind == JObject: args{"_callerId"}.getStr("")
+      else: ""
+    childCfg.callerId = delegCallerId
+    if delegCallerId.len > 0:
+      childReg.register(shellTool(defaultShellOptions(), parentCfg.discord))
+    else:
+      childReg.register(shellTool())
     let llmConfigured = not gGlobals.isNil and gGlobals.llmClient.baseUrl.len > 0
     if childGetsDelegateTool(persona, llmConfigured):
       childReg.register(makeDelegateTool())
@@ -419,6 +442,7 @@ type
 proc printSystemNote(text: string)  ## fwd
 proc printError(text: string)        ## fwd
 proc printAssistant(text: string)    ## fwd
+proc loadPersonasSafe(path: string): PersonaRegistry   ## fwd
 proc sessionExists*(dbPath, sessionId: string): bool   ## fwd
 proc listRecentSessions*(dbPath: string; limit: int = 20): seq[SessionSummary]   ## fwd
 
@@ -448,6 +472,7 @@ proc runOneTurn(
 ): AgentResult =
   ## Thin wrapper around `runAgentLoop` so the chat and ask commands
   ## share their per-turn logic.
+  resetDelegationBudget()
   if streamCallback != nil:
     var agentCfg = newAgentConfig(cfg)
     agentCfg.streamCallback = streamCallback
@@ -534,9 +559,7 @@ proc cmdChat*(
   setGlobalLLMClient(llm)
   setTalosConfig(cfg)
   let personasPath = defaultPersonasPath()
-  let pReg =
-    if fileExists(personasPath): loadPersonasFile(personasPath)
-    else: newPersonaRegistry()
+  let pReg = loadPersonasSafe(personasPath)
   setPersonaRegistry(pReg)
   setDelegationConfig(defaultDelegationConfig())
 
@@ -589,9 +612,7 @@ proc cmdAsk*(
   setGlobalLLMClient(llm)
   setTalosConfig(cfg)
   let personasPath = defaultPersonasPath()
-  let pReg =
-    if fileExists(personasPath): loadPersonasFile(personasPath)
-    else: newPersonaRegistry()
+  let pReg = loadPersonasSafe(personasPath)
   setPersonaRegistry(pReg)
   setDelegationConfig(defaultDelegationConfig())
 
@@ -703,9 +724,7 @@ proc cmdSession*(
   setGlobalLLMClient(llm)
   setTalosConfig(cfg)
   let personasPath = defaultPersonasPath()
-  let pReg =
-    if fileExists(personasPath): loadPersonasFile(personasPath)
-    else: newPersonaRegistry()
+  let pReg = loadPersonasSafe(personasPath)
   setPersonaRegistry(pReg)
   setDelegationConfig(defaultDelegationConfig())
 
@@ -773,6 +792,19 @@ proc printSystemNote(text: string) =
 proc printError(text: string) =
   stderr.writeLine("error: " & text)
   stderr.flushFile()
+
+proc loadPersonasSafe(path: string): PersonaRegistry =
+  ## Loads personas with a malformed file surfacing as a clean CLI error
+  ## (matching how ConfigError is handled) instead of an unhandled stack
+  ## trace. Triggers: a TOML syntax error, or a duplicate persona name
+  ## (names are case-insensitive, so [personas.Foo] + [personas.foo]
+  ## collides). A missing file is fine — personas are optional.
+  try:
+    if fileExists(path): loadPersonasFile(path)
+    else: newPersonaRegistry()
+  except PersonaError as e:
+    printError("personas: " & e.msg)
+    quit(2)
 
 # ---------------------------------------------------------------------------
 # Recent-sessions listing
@@ -856,7 +888,7 @@ proc cmdRunPersona*(
 
   # Load persona registry
   let personasPath = defaultPersonasPath()
-  var reg = loadPersonasFile(personasPath)
+  var reg = loadPersonasSafe(personasPath)
   if not reg.hasPersona(personaName):
     printError("persona '" & personaName & "' not found in " & personasPath)
     let available = reg.listPersonas()
@@ -1017,9 +1049,7 @@ proc cmdWeb*(
   setGlobalLLMClient(llm)
   setTalosConfig(cfg)
   let personasPath = defaultPersonasPath()
-  let pReg =
-    if fileExists(personasPath): loadPersonasFile(personasPath)
-    else: newPersonaRegistry()
+  let pReg = loadPersonasSafe(personasPath)
   setPersonaRegistry(pReg)
   setDelegationConfig(defaultDelegationConfig())
 
@@ -1028,6 +1058,7 @@ proc cmdWeb*(
   defer: mem.close()
 
   let ws = newWebServer(cfg, llm, reg, mem)
+  ws.requestSetup = resetDelegationBudget
   gWebServer = ws
   stderr.writeLine("[web] listening on http://localhost:" & $ws.port)
 
@@ -1103,8 +1134,11 @@ proc cmdDaemon*(
   reg.register(fileWriteTool(fileRules, cfg.discord))
 
   # Shell tool — available in Discord mode too (whitelist-only, solo-user
-  # daemon; delegate's child agents already had shell access regardless).
-  reg.register(shellTool())
+  # daemon), but permission-gated per caller: admins and tools.allow get
+  # it, tools.deny actually denies, everyone else gets "requires approval".
+  # The message-level isUserAllowed() gate alone gave every whitelisted
+  # user admin-equivalent shell — weaker gating than file_write.
+  reg.register(shellTool(defaultShellOptions(), cfg.discord))
 
   # Delegate + MCP tools — opt-in via daemonDelegation config flag.
   if cfg.discord.daemonDelegation:
@@ -1112,9 +1146,7 @@ proc cmdDaemon*(
     setGlobalLLMClient(llm)
     setTalosConfig(cfg)
     let personasPath = defaultPersonasPath()
-    let pReg =
-      if fileExists(personasPath): loadPersonasFile(personasPath)
-      else: newPersonaRegistry()
+    let pReg = loadPersonasSafe(personasPath)
     setPersonaRegistry(pReg)
     setDelegationConfig(defaultDelegationConfig())
 
@@ -1164,7 +1196,8 @@ proc cmdDaemon*(
       except CatchableError:
         discard
   let dispatcher = newAgentDispatcher(
-    callbackProc, cfg, llm, reg, resolveDbPath(cfg), turnCallback = turnCallback
+    callbackProc, cfg, llm, reg, resolveDbPath(cfg), turnCallback = turnCallback,
+    requestSetup = resetDelegationBudget
   )
 
   # Create the DI-based DiscordBot with real API callbacks
@@ -1226,16 +1259,15 @@ proc cmdTui*(
   setGlobalLLMClient(llm)
   setTalosConfig(cfg)
   let personasPath = defaultPersonasPath()
-  let pReg =
-    if fileExists(personasPath): loadPersonasFile(personasPath)
-    else: newPersonaRegistry()
+  let pReg = loadPersonasSafe(personasPath)
   setPersonaRegistry(pReg)
   setDelegationConfig(defaultDelegationConfig())
 
   let reg = buildRegistry(cfg)
   var mem = openMemory(cfg)
   defer: mem.close()
-  return runTui(cfg, llm, reg, mem, noStream)
+  return runTui(cfg, llm, reg, mem, noStream,
+                requestSetup = resetDelegationBudget)
 
 
 when isMainModule:
