@@ -1,6 +1,6 @@
 ## talos_code — autonomous coding harness binary.
 ##
-## Built on the ReAct agent loop from `talos_agent/agent_loop`, extended
+## Built on the ReAct agent loop from `talos_core/agent_loop`, extended
 ## with coding-specific tools (compile, test, read_file, write_file) from
 ## `talos_code/code_tool`.
 ##
