@@ -7,7 +7,6 @@ nimcache/
 *.dylib
 *.pdb
 *.stackdump
-talos_core/talos_core
 talos_agent/talos_agent
 talos_code/talos_code
 *.sqlite
@@ -19,53 +18,28 @@ talos_code/talos_code
 
 # Compiled Nim binaries (build artifacts)
 *.out
-talos_core/test_simple
 test_config
-talos_core/src/talos_core/llm_client
-talos_core/tests/tconfig
-talos_core/tests/tllm_client
-talos_core/tests/tmemory
-talos_core/tests/ttoken_counter
-talos_core/tests/ttool_registry
-talos_core/tests/test_mock_server
 talos_agent/tests/tagent_loop
 talos_agent/tests/tcli
 talos_agent/tests/tintegration
 talos_agent/tests/test_shell_tool
-talos_core/tests/test_agent_dispatcher
 talos_agent/tests/test_discord_bot
 talos_agent/tests/test_discord_commands
 talos_agent/tests/test_discord_config
 talos_agent/tests/test_discord_mocks
 talos_agent/tests/test_e2e_discord
-talos_core/tests/test_file_path_validator
-talos_core/tests/test_file_tool
-talos_core/tests/test_message_chunker
-talos_core/tests/test_permission
-talos_core/tests/test_rate_limit
 talos_agent/tests/test_thread_mapping
 talos_agent/tests/test_thread_reconnection
 talos_code/src/talos_code/talos_code
 talos_code/tcode_runner
 talos_code/tests/tcode_runner
-talos_core/tests/mock_server
-talos_core/tests/test_mcp_client
-talos_core/tests/test_persona
-talos_core/tests/mock_mcp_server
-talos_core/tests/test_mcp_tool
 code2prompt-output.md
-talos_core/tests/temp_test
-talos_core/src/talos_core/delegate
-talos_core/src/talos_core/persona
-talos_core/src/talos_core/tool_registry
-talos_core/src/talos_core/agent_loop
 talos_agent/src/tools/shell
 talos_agent/tests/tdelegate_tool
 progress.md
 talos_agent/tests/test_daemon_delegation
 talos_agent/tests/tbench
 talos_agent/tests/tweb_server
-talos_core/tests/test_plan_executor
 talos_agent/tests/ttui_streaming
 
 # Legacy Sisyphus config (opencode → oh-my-pi migration)

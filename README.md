@@ -97,11 +97,17 @@ talos/
 ### Build
 
 ```bash
-make build           # builds both talos_core and talos_agent
+make build           # builds talos_agent and talos_code
 # or, equivalently:
-cd talos_core   && nimble build
 cd talos_agent  && nimble build
+cd talos_code   && nimble build
 ```
+
+> `talos_core` (config, LLM client, memory, tool registry, ReAct loop,
+> MCP client, persona/delegation) is no longer part of this monorepo —
+> it's a standalone dependency at
+> [github.com/mrspaghatti/talos_core](https://github.com/mrspaghatti/talos_core),
+> pulled in via `nimble`'s `requires` in each consumer's `.nimble` file.
 
 ## Further Reading
 
@@ -284,8 +290,8 @@ row).
 ### Build & test
 
 ```bash
-make build           # build both packages
-make test            # run all tests (talos_core + talos_agent)
+make build           # build talos_agent + talos_code
+make test            # run all tests (talos_agent + talos_code)
 ```
 
 > **Note**: The full build (including the Discord daemon) now works on
@@ -295,8 +301,8 @@ make test            # run all tests (talos_core + talos_agent)
 Equivalent commands:
 
 ```bash
-cd talos_core   && nimble test
 cd talos_agent  && nimble test
+cd talos_code   && nimble test
 ```
 
 ### Test layout

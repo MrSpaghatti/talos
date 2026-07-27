@@ -41,21 +41,6 @@ jobs:
             nimble-${{ matrix.nim-version }}-
             nimble-
 
-      - name: Install nimble dependencies (core)
-        working-directory: talos_core
-        run: nimble install -y
-
-      # talos_core is a library — nimble build does nothing, skip it.
-      - name: Install agent dependencies only
-        working-directory: talos_agent
-        run: nimble install --depsOnly -y
-
-      - name: Test core
-        working-directory: talos_core
-        run: nimble test -y
-        env:
-          CI: "true"
-
       - name: Build agent
         working-directory: talos_agent
         run: nimble build -y
