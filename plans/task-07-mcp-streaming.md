@@ -6,6 +6,16 @@
 **Dependencies**: Task 2 (Streaming) — shares SSE parsing patterns. Can be done independently but benefits from Task 2 infrastructure.
 **Complexity**: Medium
 
+> **Before implementing:** [feature-adoption-report.md](feature-adoption-report.md)
+> §3.1 recommends scoping URI-scheme tool addressing (`pr://`, `agent://`,
+> `skill://`-style prefixes, modeled on omp) as part of *this* task's design
+> work, not as a follow-on. The idea: once MCP resources are addressable via
+> URI, make Talos's existing `read`/`search`/`write` tools scheme-aware
+> (dispatch on URI prefix) so MCP-shaped calls and local-tool-shaped calls
+> collapse into one mental model instead of two. This is a real design
+> decision about the shape of the tool registry — plan it alongside Phase 7a
+> below rather than bolting it on after.
+
 ---
 
 ## Target

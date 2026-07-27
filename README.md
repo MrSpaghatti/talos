@@ -40,7 +40,7 @@ the agent or browsing past sessions.
   `file_write` tools with path-based allow/deny policies.
 - **Persistent memory** — every conversation is logged to SQLite with
   a FTS5 full-text index over message content.
-- **CLI** — `chat`, `ask`, `session`, `history`, `search`.
+- **CLI** — `chat`, `ask`, `session`, `sessions`, `search`.
 - **Discord daemon** — run Talos as a Discord bot with DI-based
   architecture, permission system, thread management, rate limiting,
   and offline-testable mock API.
@@ -135,14 +135,13 @@ db_path = "~/.local/share/talos/talos.db"
 # One-shot question
 ./talos_agent/talos_agent ask "what is the capital of France?"
 
-# Interactive chat
+# Interactive chat: fullscreen TUI (scrollable transcript, streaming,
+# multi-line input with history). Also the default with no subcommand.
 ./talos_agent/talos_agent chat
-
-# Fullscreen TUI (scrollable transcript, streaming, history)
-./talos_agent/talos_agent tui
+./talos_agent/talos_agent
 
 # List recent sessions
-./talos_agent/talos_agent history
+./talos_agent/talos_agent sessions
 
 # Full-text search across all stored messages
 ./talos_agent/talos_agent search "capital of France"
@@ -166,13 +165,13 @@ export DISCORD_BOT_TOKEN="your_token_here"
 talos_agent <subcommand> [options]
 
 Subcommands:
-  chat                    Interactive REPL.
-  tui                     Fullscreen terminal UI (scrollable transcript,
-                          streaming, multi-line input with history).
+  chat                    Interactive fullscreen TUI (scrollable transcript,
+                          streaming, multi-line input with history). Also
+                          the default when no subcommand is given.
   ask <question>          Single-shot question.
   session <id>            Print history of a session and continue chatting
                           (new turns go to a new session).
-  history                 List most recently updated sessions.
+  sessions                List most recently updated sessions.
   search <query>          FTS5 search across stored messages.
   run <persona> <task>    Run a named persona with a given task.
   web                     Start the web UI HTTP server (blocking).
@@ -192,7 +191,7 @@ Option for ask only:
                           executes them, synthesises a final answer).
 
 
-Options for history / search:
+Options for sessions / search:
   --limit=<n>             Max sessions / matches to show.
   --config=<path>         Path to TOML config (overrides default).
   --envFile=<path>        Path to .env (default: .env).

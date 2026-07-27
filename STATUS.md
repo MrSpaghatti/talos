@@ -216,3 +216,20 @@ See [ROADMAP.md](ROADMAP.md) for the tracking table and execution order.
    scrollable transcript, streaming rendering, multi-line input with history.
 
 ### Remaining (recommended order)
+
+1. **Task 5 — Vector Memory** (`plans/task-05-vector-memory.md`) — build
+   directly in the `retain`/`recall`/`reflect` shape rather than one opaque
+   memory tool (see cross-reference note at the top of that file), and
+   check the `sqlite-vec` FFI approach (`plans/research-sqlite-vec-nim-ffi.md`)
+   against the plan's brute-force cosine-similarity phase before implementing.
+2. **Task 7 — MCP Streaming** (`plans/task-07-mcp-streaming.md`) — fold in
+   URI-scheme tool addressing (`read`/`search`/`write` dispatching on URI
+   prefix, covering both local resources and MCP resources) as part of the
+   same design pass, not as a follow-on.
+
+See [ROADMAP.md](ROADMAP.md)'s "Feature Adoption Backlog" section for eight
+additional smaller items (task-11 through task-18) sourced from a 2026-07-25
+comparative review of oh-my-pi, OpenCode, and Claude Code — full rationale in
+`plans/feature-adoption-report.md`. Three of them (`/btw`, preview-edit,
+model routing) are cheap and unblocked; the rest sequence around Task 5/7 or
+are deferred.

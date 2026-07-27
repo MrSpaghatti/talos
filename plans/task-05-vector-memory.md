@@ -6,6 +6,24 @@
 **Dependencies**: Task 1 (Agent Loop relocation — soft, for cleaner imports)
 **Complexity**: Medium-Large
 
+> **Before implementing:** cross-check the plan below against two 2026-07-25
+> notes that postdate it:
+> - [feature-adoption-report.md](feature-adoption-report.md) §2.1 — recommends
+>   exposing this as three tool-registry entries (`retain` / `recall` /
+>   `reflect`) instead of one opaque memory tool. Same backend, same total
+>   scope, different API shape — build it in this shape from the start rather
+>   than shipping one tool and refactoring later. `retain`/`recall` are pure
+>   data operations (build first); `reflect` needs an extra LLM call over
+>   retrieved context.
+> - [research-sqlite-vec-nim-ffi.md](research-sqlite-vec-nim-ffi.md) —
+>   proposes `sqlite-vec`'s `vec0` virtual table (via a two-line `importc`
+>   FFI shim on the existing `db_sqlite` dynlib) in place of Phase 5b/5c's
+>   brute-force "load every embedding into Nim and loop" approach, which
+>   won't scale.
+> Also worth scoping the checkpoint/memory boundary (report §2.2,
+> [task-14-checkpoints.md](task-14-checkpoints.md)) in the same design pass,
+> since both touch "what's kept vs. dropped from context."
+
 ---
 
 ## Target
