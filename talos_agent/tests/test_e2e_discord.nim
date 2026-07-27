@@ -6,7 +6,7 @@ import talos_agent/discord/[discord, discord_mocks, discord_types,
   thread_mapping]
 import talos_core/[agent_dispatcher, file_tool,
   file_path_validator, tool_registry, config]
-import mock_llm_server
+import talos_core/testkit/mock_llm_server
 
 suite "End-to-end Discord Integration":
   var

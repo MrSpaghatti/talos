@@ -15,7 +15,7 @@ import talos_core/llm_client
 import talos_core/tool_registry
 import talos_core/memory
 import talos_agent/web_server
-import mock_llm_server
+import talos_core/testkit/mock_llm_server
 
 const SuccessBody = """
 {

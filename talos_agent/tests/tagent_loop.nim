@@ -1,7 +1,7 @@
 ## Tests for talos_agent/agent_loop.nim
 ##
 ## Drives the ReAct loop against the async mock server from
-## `talos_core/tests/mock_server.nim`. The mock server only accepts a
+## `talos_core/testkit/mock_server.nim`. The mock server only accepts a
 ## single connection per `start()`; this test runs the asyncdispatcher
 ## in a dedicated thread and re-arms `acceptRequest` for every turn so
 ## the sync LLMClient can complete multi-turn conversations against it.
@@ -14,7 +14,7 @@ import talos_core/tool_registry
 import talos_core/memory
 import talos_core/config
 
-import mock_server
+import talos_core/testkit/mock_server
 import talos_core/agent_loop
 
 # ---------------------------------------------------------------------------

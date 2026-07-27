@@ -31,7 +31,7 @@ import talos_core/llm_client
 import talos_core/tool_registry
 import talos_core/memory
 
-import mock_server
+import talos_core/testkit/mock_server
 import talos_core/agent_loop
 import tools/shell
 

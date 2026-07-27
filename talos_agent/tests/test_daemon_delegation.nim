@@ -3,7 +3,7 @@ import talos_core/agent_dispatcher
 import talos_agent/discord/discord_types
 import talos_core/config
 import talos_core/tool_registry
-import mock_llm_server
+import talos_core/testkit/mock_llm_server
 
 suite "daemon delegation config":
   test "daemonDelegation defaults to false":
