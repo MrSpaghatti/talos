@@ -6,7 +6,7 @@
 
 import std/[options, sequtils, strutils, times]
 import discord_types
-import permission
+import talos_core/permission
 
 type
   CommandResult* = object
@@ -36,7 +36,7 @@ proc handleConfigCommand*(args: string, authorId: string, cfg: DiscordConfig): C
     return CommandResult(response: lines.join("\n"), updatedConfig: none[DiscordConfig]())
 
   of "set":
-    if not isAdmin(authorId, cfg):
+    if not isAdmin(authorId, toToolAcl(cfg)):
       return CommandResult(response: "Permission denied: admin required.", updatedConfig: none[DiscordConfig]())
     if parts.len < 3:
       return CommandResult(response: "Usage: !config set <key> <value>", updatedConfig: none[DiscordConfig]())
@@ -54,7 +54,7 @@ proc handleConfigCommand*(args: string, authorId: string, cfg: DiscordConfig): C
       return CommandResult(response: "Unknown config key: " & key, updatedConfig: none[DiscordConfig]())
 
   of "reload":
-    if not isAdmin(authorId, cfg):
+    if not isAdmin(authorId, toToolAcl(cfg)):
       return CommandResult(response: "Permission denied: admin required.", updatedConfig: none[DiscordConfig]())
     # Placeholder: actual reload from disk is handled by the bot event loop
     return CommandResult(response: "Config reload requested. Reload must be handled by the bot runtime.", updatedConfig: none[DiscordConfig]())
@@ -68,7 +68,7 @@ proc handleConfigCommand*(args: string, authorId: string, cfg: DiscordConfig): C
 
     case allowlistCmd
     of "add":
-      if not isAdmin(authorId, cfg):
+      if not isAdmin(authorId, toToolAcl(cfg)):
         return CommandResult(response: "Permission denied: admin required.", updatedConfig: none[DiscordConfig]())
       if allowlistParts.len < 2:
         return CommandResult(response: "Usage: !config allowlist add <path>", updatedConfig: none[DiscordConfig]())
@@ -79,7 +79,7 @@ proc handleConfigCommand*(args: string, authorId: string, cfg: DiscordConfig): C
       return CommandResult(response: "Added '" & path & "' to file allowlist.", updatedConfig: some(newCfg))
 
     of "remove":
-      if not isAdmin(authorId, cfg):
+      if not isAdmin(authorId, toToolAcl(cfg)):
         return CommandResult(response: "Permission denied: admin required.", updatedConfig: none[DiscordConfig]())
       if allowlistParts.len < 2:
         return CommandResult(response: "Usage: !config allowlist remove <path>", updatedConfig: none[DiscordConfig]())
@@ -120,7 +120,7 @@ proc handleAdminCommand*(args: string, authorId: string, cfg: DiscordConfig): Co
 
   let subcmd = parts[0].toLowerAscii()
 
-  if not isAdmin(authorId, cfg):
+  if not isAdmin(authorId, toToolAcl(cfg)):
     return CommandResult(response: "Permission denied: admin required.", updatedConfig: none[DiscordConfig]())
 
   case subcmd
@@ -155,7 +155,7 @@ proc handleSessionCommand*(args: string, authorId: string, cfg: DiscordConfig): 
     return CommandResult(response: "Session info for " & sessionId & ": (not tracked in command handler)", updatedConfig: none[DiscordConfig]())
 
   of "clear":
-    if not isAdmin(authorId, cfg):
+    if not isAdmin(authorId, toToolAcl(cfg)):
       return CommandResult(response: "Permission denied: admin required.", updatedConfig: none[DiscordConfig]())
     if parts.len < 2:
       return CommandResult(response: "Usage: !session clear <session_id>", updatedConfig: none[DiscordConfig]())

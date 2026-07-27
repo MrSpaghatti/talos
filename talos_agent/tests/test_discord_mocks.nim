@@ -1,5 +1,5 @@
 import std/[asyncdispatch, options, unittest]
-import talos_core/discord_mocks
+import talos_agent/discord/discord_mocks
 
 suite "Discord mocks":
   test "records discord api calls in order":

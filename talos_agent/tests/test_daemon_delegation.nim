@@ -1,6 +1,6 @@
 import unittest, asyncdispatch, options, strutils, os, times
 import talos_core/agent_dispatcher
-import talos_core/discord_types
+import talos_agent/discord/discord_types
 import talos_core/config
 import talos_core/tool_registry
 import mock_llm_server
@@ -43,13 +43,12 @@ suite "agent dispatcher — production path (real runAgentLoop)":
     let request = AgentRequest(
       userInput: "hello",
       sessionId: "sess_1",
-      channelId: "chan_1",
-      threadId: "thread_1"
+      surfaceId: "chan_1"
     )
     waitFor dispatchAgent(dispatcher, request)
     check received.responseText == "hello from agent"
     check received.error.isNone
-    check received.channelId == "chan_1"
+    check received.surfaceId == "chan_1"
 
   test "dispatcher propagates LLM errors as AgentResult.error":
     server.enqueue("500 Internal Server Error",
@@ -65,12 +64,11 @@ suite "agent dispatcher — production path (real runAgentLoop)":
     let request = AgentRequest(
       userInput: "test",
       sessionId: "sess_2",
-      channelId: "chan_2",
-      threadId: "thread_2"
+      surfaceId: "chan_2"
     )
     waitFor dispatchAgent(dispatcher, request)
     check received.error.isSome
-    check received.channelId == "chan_2"
+    check received.surfaceId == "chan_2"
 
   test "dispatcher sends the real user input to the LLM":
     server.enqueue("200 OK", SuccessBody)
@@ -81,8 +79,7 @@ suite "agent dispatcher — production path (real runAgentLoop)":
     let request = AgentRequest(
       userInput: "custom input",
       sessionId: "sess_3",
-      channelId: "chan_3",
-      threadId: "thread_3"
+      surfaceId: "chan_3"
     )
     waitFor dispatchAgent(dispatcher, request)
     check server.requestCount == 1
@@ -100,19 +97,18 @@ suite "agent dispatcher — production path (real runAgentLoop)":
     let request = AgentRequest(
       userInput: "sync test",
       sessionId: "sess_4",
-      channelId: "chan_4",
-      threadId: "thread_4"
+      surfaceId: "chan_4"
     )
     waitFor dispatchAgent(dispatcher, request)
     check resultReceived == true
 
-  test "turnCallback fires once per ReAct turn with the request's channelId":
+  test "turnCallback fires once per ReAct turn with the request's surfaceId":
     server.enqueue("200 OK", SuccessBody)
     var turnCalls: seq[string] = @[]
     let cb = proc(r: agent_dispatcher.AgentResult) {.gcsafe, closure, raises: [].} = discard
-    let turnCb = proc(channelId: string) {.gcsafe, closure, raises: [].} =
+    let turnCb = proc(surfaceId: string) {.gcsafe, closure, raises: [].} =
       {.cast(gcsafe), cast(raises: []).}:
-        turnCalls.add(channelId)
+        turnCalls.add(surfaceId)
 
     let dispatcher = newAgentDispatcher(
       cb, defaultConfig(), makeClient(server), newToolRegistry(), ":memory:",
@@ -120,8 +116,7 @@ suite "agent dispatcher — production path (real runAgentLoop)":
     let request = AgentRequest(
       userInput: "hello",
       sessionId: "sess_5",
-      channelId: "chan_typing",
-      threadId: "thread_5"
+      surfaceId: "chan_typing"
     )
     waitFor dispatchAgent(dispatcher, request)
     check turnCalls == @["chan_typing"]
@@ -156,16 +151,14 @@ suite "agent dispatcher — session continuity across dispatches":
     waitFor dispatchAgent(dispatcher, AgentRequest(
       userInput: "first turn from the thread",
       sessionId: "sess_discord_thread_1",
-      channelId: "chan_1",
-      threadId: "thread_1",
+      surfaceId: "chan_1",
     ))
     check received.error.isNone
 
     waitFor dispatchAgent(dispatcher, AgentRequest(
       userInput: "second turn from the thread",
       sessionId: "sess_discord_thread_1",
-      channelId: "chan_1",
-      threadId: "thread_1",
+      surfaceId: "chan_1",
     ))
     check received.error.isNone
 
@@ -182,7 +175,7 @@ suite "agent dispatcher — placeholder path (no cfg/llm)":
       {.cast(gcsafe), cast(raises: []).}:
         received = r
     let dispatcher = newAgentDispatcher(cb)
-    let request = AgentRequest(userInput: "echo me", channelId: "chan_5")
+    let request = AgentRequest(userInput: "echo me", surfaceId: "chan_5")
     waitFor dispatchAgent(dispatcher, request)
     check received.responseText == "Agent response for: echo me"
     check received.error.isNone

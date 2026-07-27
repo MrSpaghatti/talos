@@ -5,10 +5,12 @@ import db_connector/db_sqlite
 import talos_core/agent_dispatcher
 import talos_core/build_llm_client
 import talos_core/config
-import talos_core/discord
-import talos_core/discord_bridge
-import talos_core/discord_mocks
-import talos_core/discord_types
+import talos_agent/discord/discord
+import talos_agent/discord/discord_bridge
+import talos_agent/discord/discord_mocks
+import talos_agent/discord/discord_types
+import talos_agent/discord/discord_config
+import talos_agent/discord/thread_mapping
 import talos_core/file_tool
 import talos_core/file_path_validator
 import talos_core/llm_client
@@ -17,7 +19,6 @@ import talos_core/message_chunker
 import talos_core/mcp_tool
 import talos_core/persona
 import talos_core/delegate
-import talos_core/thread_mapping
 import talos_core/tool_registry
 import tools/shell
 import talos_agent/cli
@@ -69,6 +70,7 @@ proc sendWithLogging*(sendFn: SendMessageFn; channelId, content: string): Future
 proc cmdDaemon*(
     config = "";
     envFile = ".env";
+    discordConfig = "";
 ): int =
   ## Starts the Discord bot daemon.
   ##
@@ -91,9 +93,10 @@ proc cmdDaemon*(
     cfg = loadConfigWithOverrides(ov)
   except ConfigError as e:
     printError(e.msg); return 2
+  let discordCfg = loadDiscordConfig(discordConfig)
 
   # Read Discord bot token from the configured env var
-  let tokenEnv = cfg.discord.tokenEnv
+  let tokenEnv = discordCfg.tokenEnv
   let token = getEnv(tokenEnv)
   if token.len == 0:
     printError("Discord token not found in env var: " & tokenEnv)
@@ -107,26 +110,27 @@ proc cmdDaemon*(
 
   # File tools — always available for safe Discord file access
   let fileRules = FileRules(
-    sandboxDir: cfg.discord.fileSandboxDir,
-    allowPatterns: cfg.discord.fileRules.allow,
+    sandboxDir: discordCfg.fileSandboxDir,
+    allowPatterns: discordCfg.fileRules.allow,
     askPatterns: @[],
-    denyPatterns: cfg.discord.fileRules.deny,
+    denyPatterns: discordCfg.fileRules.deny,
   )
   reg.register(fileReadTool(fileRules))
-  reg.register(fileWriteTool(fileRules, cfg.discord))
+  reg.register(fileWriteTool(fileRules, toToolAcl(discordCfg)))
 
   # Shell tool — available in Discord mode too (whitelist-only, solo-user
   # daemon), but permission-gated per caller: admins and tools.allow get
   # it, tools.deny actually denies, everyone else gets "requires approval".
   # The message-level isUserAllowed() gate alone gave every whitelisted
   # user admin-equivalent shell — weaker gating than file_write.
-  reg.register(shellTool(defaultShellOptions(), cfg.discord))
+  reg.register(shellTool(defaultShellOptions(), toToolAcl(discordCfg)))
 
   # Delegate + MCP tools — opt-in via daemonDelegation config flag.
-  if cfg.discord.daemonDelegation:
+  if discordCfg.daemonDelegation:
     # Set agent globals so the delegate tool can initialise.
     setGlobalLLMClient(llm)
     setTalosConfig(cfg)
+    setToolAcl(toToolAcl(discordCfg))
     let personasPath = defaultPersonasPath()
     let pReg = loadPersonasSafe(personasPath)
     setPersonaRegistry(pReg)
@@ -167,14 +171,14 @@ proc cmdDaemon*(
                  else: r.responseText
       let chunks = chunkMessage(text)
       for chunk in chunks:
-        asyncCheck sendWithLogging(sendFn, r.channelId, chunk)
+        asyncCheck sendWithLogging(sendFn, r.surfaceId, chunk)
   # Discord's typing indicator expires after ~10s; refresh it once per
   # ReAct turn so it stays lit for the length of a multi-turn agent run
   # instead of just the first ~10s. See agent_loop.AgentConfig.turnCallback.
-  let turnCallback = proc(channelId: string) {.gcsafe, raises: [].} =
+  let turnCallback = proc(surfaceId: string) {.gcsafe, raises: [].} =
     {.cast(gcsafe), cast(raises: []).}:
       try:
-        waitFor typingFn(channelId)
+        waitFor typingFn(surfaceId)
       except CatchableError:
         discard
   let dispatcher = newAgentDispatcher(
@@ -189,7 +193,7 @@ proc cmdDaemon*(
     createThread = makeCreateThreadFn(api),
     archiveThread = makeArchiveThreadFn(api),
     db = threadDb,
-    config = cfg.discord,
+    config = discordCfg,
     dispatcher = dispatcher,
     shard = shard,
   )

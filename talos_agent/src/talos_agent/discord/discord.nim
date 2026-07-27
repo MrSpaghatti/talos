@@ -11,12 +11,11 @@
 
 import std/[asyncdispatch, logging, options, strutils]
 import db_connector/db_sqlite
-import discord_mocks, discord_types, permission, discord_commands,
-       agent_dispatcher, message_chunker
+import discord_mocks, discord_types, discord_commands
+import talos_core/[permission, agent_dispatcher, message_chunker, util]
 import dimscord
 import discord_bridge
 import thread_mapping
-import util
 
 type
   SendMessageFn* = proc (channelId, content: string): Future[string] {.async, gcsafe.}
@@ -68,7 +67,7 @@ proc onMessageCreate*(bot: DiscordBot; msg: discord_mocks.Message) {.async, gcsa
     return
 
   # 2. Check if user is allowed
-  if not isUserAllowed(msg.author.id, bot.config):
+  if not isUserAllowed(msg.author.id, toToolAcl(bot.config)):
     return
 
   # 3. Check for command prefix
@@ -106,8 +105,7 @@ proc onMessageCreate*(bot: DiscordBot; msg: discord_mocks.Message) {.async, gcsa
     let request = AgentRequest(
       userInput: msg.content,
       sessionId: existingThreadSession.get(),
-      channelId: msg.channel_id,
-      threadId: msg.channel_id,
+      surfaceId: msg.channel_id,
       userId: msg.author.id,
     )
     await bot.dispatcher.dispatchAgent(request)
@@ -128,8 +126,7 @@ proc onMessageCreate*(bot: DiscordBot; msg: discord_mocks.Message) {.async, gcsa
     let request = AgentRequest(
       userInput: msg.content,
       sessionId: sessionId,
-      channelId: threadId,
-      threadId: threadId,
+      surfaceId: threadId,
       userId: msg.author.id,
     )
     await bot.dispatcher.dispatchAgent(request)
@@ -144,8 +141,7 @@ proc onMessageCreate*(bot: DiscordBot; msg: discord_mocks.Message) {.async, gcsa
   let request = AgentRequest(
     userInput: msg.content,
     sessionId: newSessionId,
-    channelId: threadId,
-    threadId: threadId,
+    surfaceId: threadId,
     userId: msg.author.id,
   )
   await bot.dispatcher.dispatchAgent(request)

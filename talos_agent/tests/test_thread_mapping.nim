@@ -5,7 +5,7 @@
 
 import std/[unittest, options, os]
 import db_connector/db_sqlite
-import talos_core/thread_mapping
+import talos_agent/discord/thread_mapping
 
 # ---------------------------------------------------------------------------
 # Helpers

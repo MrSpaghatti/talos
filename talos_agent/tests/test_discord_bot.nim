@@ -1,11 +1,11 @@
 import unittest
 import std/[asyncdispatch, options, strutils]
 import db_connector/db_sqlite
-import talos_core/discord
-import talos_core/discord_mocks
-import talos_core/discord_types
+import talos_agent/discord/discord
+import talos_agent/discord/discord_mocks
+import talos_agent/discord/discord_types
 import talos_core/agent_dispatcher
-import talos_core/thread_mapping
+import talos_agent/discord/thread_mapping
 
 suite "DiscordBot (DI-based)":
 
@@ -168,7 +168,7 @@ suite "DiscordBot (DI-based)":
     # right content and channel/thread routing, not just that *some*
     # dispatch happened with unknown contents.
     check received.responseText == "Agent response for: hello agent"
-    check received.channelId == "thread_1"
+    check received.surfaceId == "thread_1"
 
   test "prefix-only message with no command is ignored":
     let (bot, api, db) = makeBot(users = @["user1"])

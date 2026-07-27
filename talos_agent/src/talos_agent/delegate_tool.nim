@@ -163,7 +163,7 @@ proc makeDelegateExecuteProc*(): auto =
       else: ""
     childCfg.callerId = delegCallerId
     if delegCallerId.len > 0:
-      childReg.register(shellTool(defaultShellOptions(), parentCfg.discord))
+      childReg.register(shellTool(defaultShellOptions(), captured.toolAcl))
     else:
       childReg.register(shellTool())
     let llmConfigured = not gGlobals.isNil and gGlobals.llmClient.baseUrl.len > 0

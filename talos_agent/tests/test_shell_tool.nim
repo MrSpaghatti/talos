@@ -5,7 +5,7 @@
 
 import std/[json, monotimes, os, strutils, times, unittest]
 
-import talos_core/discord_types
+import talos_core/acl
 import talos_core/tool_registry
 import tools/shell
 
@@ -201,44 +201,44 @@ suite "shell tool timeout":
 
 suite "shell tool permission gating":
   setup:
-    var dcfg = defaultDiscordConfig()
-    dcfg.admins.allow.add("admin_user")
-    dcfg.users.allow.add("normal_user")
+    var dacl = ToolAcl()
+    dacl.admins.allow.add("admin_user")
+    dacl.users.allow.add("normal_user")
 
-  proc gatedReg(cfg: DiscordConfig): ToolRegistry =
+  proc gatedReg(acl: ToolAcl): ToolRegistry =
     result = newToolRegistry()
-    result.register(shellTool(fastShellOpts(), cfg))
+    result.register(shellTool(fastShellOpts(), acl))
 
   test "admin caller can run commands":
-    let reg = gatedReg(dcfg)
+    let reg = gatedReg(dacl)
     let res = reg.execute("shell",
       """{"cmd": "echo gated-ok", "_callerId": "admin_user"}""")
     check (not res.isError)
     check res.output.contains("gated-ok")
 
   test "non-admin allowed user requires approval":
-    let reg = gatedReg(dcfg)
+    let reg = gatedReg(dacl)
     let res = reg.execute("shell",
       """{"cmd": "echo nope", "_callerId": "normal_user"}""")
     check res.isError
     check res.output.contains("requires approval")
 
   test "unknown user is denied":
-    let reg = gatedReg(dcfg)
+    let reg = gatedReg(dacl)
     let res = reg.execute("shell",
       """{"cmd": "echo nope", "_callerId": "stranger"}""")
     check res.isError
     check res.output.contains("denied")
 
   test "missing _callerId fails closed":
-    let reg = gatedReg(dcfg)
+    let reg = gatedReg(dacl)
     let res = reg.execute("shell", """{"cmd": "echo nope"}""")
     check res.isError
 
   test "tools.deny = [shell] actually denies, even for admins":
     # Regression guard: this configuration used to be a silent no-op
     # because the shell tool never consulted canUseTool at all.
-    var cfg = dcfg
+    var cfg = dacl
     cfg.tools.deny.add("shell")
     let reg = gatedReg(cfg)
     let res = reg.execute("shell",
@@ -247,7 +247,7 @@ suite "shell tool permission gating":
     check res.output.contains("denied")
 
   test "tools.allow = [shell] grants non-admin users shell":
-    var cfg = dcfg
+    var cfg = dacl
     cfg.tools.allow.add("shell")
     let reg = gatedReg(cfg)
     let res = reg.execute("shell",

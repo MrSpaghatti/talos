@@ -1,10 +1,10 @@
 import std/[asyncdispatch, strutils, unittest, options]
 import db_connector/db_sqlite
-import talos_core/discord
-import talos_core/discord_mocks
-import talos_core/discord_types
+import talos_agent/discord/discord
+import talos_agent/discord/discord_mocks
+import talos_agent/discord/discord_types
 import talos_core/agent_dispatcher
-import talos_core/thread_mapping
+import talos_agent/discord/thread_mapping
 
 proc openTestDb(): DbConn =
   let db = open(":memory:", "", "", "")

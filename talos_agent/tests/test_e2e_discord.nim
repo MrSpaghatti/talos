@@ -1,10 +1,11 @@
 import unittest
-import std/[asyncdispatch, options, os, strutils, json, times]
+import std/[asyncdispatch, os, strutils, json, times]
 import db_connector/db_sqlite
 
-import talos_core/[discord, discord_mocks, discord_types, discord_commands,
-  permission, agent_dispatcher, file_tool, file_path_validator, thread_mapping,
-  tool_registry, config]
+import talos_agent/discord/[discord, discord_mocks, discord_types,
+  thread_mapping]
+import talos_core/[agent_dispatcher, file_tool,
+  file_path_validator, tool_registry, config]
 import mock_llm_server
 
 suite "End-to-end Discord Integration":
@@ -145,8 +146,9 @@ suite "End-to-end Discord Integration: real conversation continuity":
     shard = newMockShard("bot_user_id")
 
     var cfg = defaultConfig()
-    cfg.discord.admins.allow.add("admin_user")
-    cfg.discord.users.allow.add("regular_user")
+    var discordCfg = defaultDiscordConfig()
+    discordCfg.admins.allow.add("admin_user")
+    discordCfg.users.allow.add("regular_user")
 
     let llm = makeClient(server)
     let reg = newToolRegistry()
@@ -156,7 +158,7 @@ suite "End-to-end Discord Integration: real conversation continuity":
     # back to the channel/thread the user is in.
     let callbackProc = proc(r: AgentResult) {.gcsafe, closure, raises: [].} =
       {.cast(gcsafe), cast(raises: []).}:
-        try: discard waitFor sendFn(r.channelId, r.responseText)
+        try: discard waitFor sendFn(r.surfaceId, r.responseText)
         except CatchableError: discard
     let dispatcher = newAgentDispatcher(
       callbackProc, cfg, llm, reg, dbPath)
@@ -167,7 +169,7 @@ suite "End-to-end Discord Integration: real conversation continuity":
       createThread = mockCreateThreadFn(api),
       archiveThread = mockArchiveThreadFn(api),
       db = db,
-      config = cfg.discord,
+      config = discordCfg,
       dispatcher = dispatcher,
       shard = shard,
     )

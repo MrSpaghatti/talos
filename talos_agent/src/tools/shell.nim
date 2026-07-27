@@ -35,7 +35,7 @@ when defined(posix):
 
 import talos_core/tool_registry
 import talos_core/posix_io
-import talos_core/discord_types
+import talos_core/acl
 import talos_core/permission
 
 const
@@ -433,7 +433,7 @@ proc shellTool*(opts: ShellOptions = defaultShellOptions()): Tool =
     execute = makeShellExecuteProc(opts),
   )
 
-proc shellTool*(opts: ShellOptions, discordCfg: DiscordConfig): Tool =
+proc shellTool*(opts: ShellOptions, acl: ToolAcl): Tool =
   ## Permission-gated variant for contexts with a real caller identity
   ## (the Discord daemon and its delegation children). Reads the reserved
   ## `_callerId` argument the agent loop injects into every tool call and
@@ -446,12 +446,11 @@ proc shellTool*(opts: ShellOptions, discordCfg: DiscordConfig): Tool =
   ## per-user identity to check (an empty `_callerId` here would fail
   ## closed and disable the tool entirely).
   let inner = makeShellExecuteProc(opts)
-  let cfg = discordCfg
   let gated = proc (args: JsonNode): ToolResult {.gcsafe, raises: [].} =
     let callerId =
       if not args.isNil and args.kind == JObject: args{"_callerId"}.getStr("")
       else: ""
-    let perm = try: canUseTool(callerId, "shell", cfg)
+    let perm = try: canUseTool(callerId, "shell", acl)
                except CatchableError:
                  return ToolResult(output: "shell: permission check failed",
                                    isError: true, exitCode: -1)

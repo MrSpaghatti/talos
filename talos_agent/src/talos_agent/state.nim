@@ -6,6 +6,7 @@
 
 import std/[asyncdispatch, asynchttpserver]
 import talos_agent/web_server
+import talos_core/acl
 import talos_core/config
 import talos_core/delegate
 import talos_core/llm_client
@@ -22,6 +23,11 @@ type
     llmClient*: LLMClient
     delegationConfig*: DelegationConfig
     talosConfig*: TalosConfig
+    toolAcl*: ToolAcl
+      ## Caller-identity ACL for gating a delegated child's shell tool in
+      ## daemon mode (see delegate_tool.nim). Zero value denies everyone,
+      ## matching an unconfigured product config — set explicitly by
+      ## whichever product enables delegation (e.g. the Discord daemon).
 
 var gGlobals*: AgentGlobals = nil
 
@@ -48,6 +54,12 @@ proc setTalosConfig*(cfg: TalosConfig) =
     gGlobals = AgentGlobals(talosConfig: cfg)
   else:
     gGlobals.talosConfig = cfg
+
+proc setToolAcl*(acl: ToolAcl) =
+  if gGlobals.isNil:
+    gGlobals = AgentGlobals(toolAcl: acl)
+  else:
+    gGlobals.toolAcl = acl
 
 proc resetDelegationBudget*() {.gcsafe, raises: [].} =
   ## Restores the delegation budget to its configured baseline. Must be

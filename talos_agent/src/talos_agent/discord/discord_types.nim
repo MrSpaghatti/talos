@@ -1,12 +1,11 @@
 ## Discord configuration types.
 
-import file_path_validator
+import talos_core/file_path_validator
+import talos_core/acl
+export acl  ## Re-export AccessControl/ToolAcl so callers that only import
+            ## discord_types (the common case) get both without a second import.
 
 type
-  AccessControl* = object
-    allow*: seq[string]
-    deny*: seq[string]
-
   DiscordConfig* = object
     tokenEnv*: string
     prefix*: string
@@ -33,3 +32,9 @@ proc defaultDiscordConfig*(): DiscordConfig =
     tools: AccessControl(allow: @[], deny: @[]),
     daemonDelegation: false
   )
+
+proc toToolAcl*(cfg: DiscordConfig): ToolAcl =
+  ## Adapts Discord's config into core's product-agnostic ACL shape.
+  ## A literal field copy — DiscordConfig.admins/users/tools are already
+  ## AccessControl, core's own type.
+  ToolAcl(admins: cfg.admins, users: cfg.users, tools: cfg.tools)

@@ -1,7 +1,7 @@
 import unittest
 import std/[options, strutils]
-import talos_core/discord_types
-import talos_core/discord_commands
+import talos_agent/discord/discord_types
+import talos_agent/discord/discord_commands
 
 suite "Discord Command Handler":
 

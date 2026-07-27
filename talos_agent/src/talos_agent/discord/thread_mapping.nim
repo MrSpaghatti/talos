@@ -17,7 +17,7 @@
 
 import db_connector/db_sqlite
 import std/options
-import util
+import talos_core/util
 
 # ---------------------------------------------------------------------------
 # Schema initialisation
