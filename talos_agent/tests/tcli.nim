@@ -4,7 +4,7 @@
 ## LLM endpoint:
 ##   - Config-override layering
 ##   - Sqlite-backed session listing / lookup
-##   - The history and search subcommand entry points against an empty
+##   - The sessions and search subcommand entry points against an empty
 ##     fresh database
 ##
 ## Subcommands that talk to an LLM (`chat`, `ask`, `session`) are not
@@ -226,7 +226,7 @@ suite "cli: sessionExists":
     check sessionExists(path, sid)
     check not sessionExists(path, "sess_does_not_exist")
 
-suite "cli: cmdHistory and cmdSearch on a fresh db":
+suite "cli: cmdSessions and cmdSearch on a fresh db":
   test "history prints 'no sessions yet' to the user when the db is empty":
     let path = tempDbPath()
     defer: teardownDb(path)
@@ -235,7 +235,7 @@ suite "cli: cmdHistory and cmdSearch on a fresh db":
     defer:
       delEnv("TALOS_DB_PATH")
       delEnv("OPENROUTER_API_KEY")
-    let (rc, output) = captureStdout(proc(): int = cmdHistory(envFile = "/dev/null"))
+    let (rc, output) = captureStdout(proc(): int = cmdSessions(envFile = "/dev/null"))
     check rc == 0
     check "no sessions yet" in output
 
@@ -248,7 +248,7 @@ suite "cli: cmdHistory and cmdSearch on a fresh db":
     defer:
       delEnv("TALOS_DB_PATH")
       delEnv("OPENROUTER_API_KEY")
-    let (rc, output) = captureStdout(proc(): int = cmdHistory(envFile = "/dev/null"))
+    let (rc, output) = captureStdout(proc(): int = cmdSessions(envFile = "/dev/null"))
     check rc == 0
     check sid in output
 
@@ -324,5 +324,5 @@ suite "cli: binary smoke test":
       check code == 0
       check output.contains("chat")
       check output.contains("ask")
-      check output.contains("history")
+      check output.contains("sessions")
       check output.contains("search")

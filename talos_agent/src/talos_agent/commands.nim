@@ -1,4 +1,4 @@
-## CLI command handlers: chat, ask, session, history, search, run, web, tui.
+## CLI command handlers: chat, ask, session, sessions, search, run, web.
 
 import std/[os, strutils, strformat, asyncdispatch, asynchttpserver, net]
 import talos_core/agent_loop
@@ -115,7 +115,7 @@ proc cmdChat*(
     envFile = ".env";
     noStream = false;
 ): int =
-  ## Interactive chat mode. Returns a process exit code.
+  ## Interactive chat mode: fullscreen TUI. Returns a process exit code.
   setControlCHook(onCtrlC)
   var ov = emptyOverrides()
   ov.model = model
@@ -143,18 +143,8 @@ proc cmdChat*(
   let reg = buildRegistry(cfg)
   var mem = openMemory(cfg)
   defer: mem.close()
-  var streamCb: OnStreamEvent = nil
-  if not noStream:
-    streamCb = proc(event: ChatCompletionStreamEvent) {.gcsafe, raises: [].} =
-      {.cast(raises: []).}:
-        if event.kind == sekContent and event.delta.len > 0:
-          stdout.write(event.delta)
-          stdout.flushFile()
-  discard runChatLoop(
-    cfg, llm, reg, mem,
-    initialBanner = fmt"chat: provider={cfg.provider} model={activeModel(cfg)}",
-    streamCallback = streamCb,
-  )
+  return runTui(cfg, llm, reg, mem, noStream,
+                requestSetup = resetDelegationBudget)
 
 proc cmdAsk*(
     question: seq[string];
@@ -317,7 +307,7 @@ proc cmdSession*(
 # History / search
 # ---------------------------------------------------------------------------
 
-proc cmdHistory*(
+proc cmdSessions*(
     limit = 20;
     config = "";
     envFile = ".env";
@@ -522,46 +512,3 @@ proc cmdWeb*(
   printSystemNote("shutting down web server")
   ws.stop()
   return 0
-
-# ---------------------------------------------------------------------------
-# TUI command
-# ---------------------------------------------------------------------------
-
-proc cmdTui*(
-    model = "";
-    provider = "";
-    temperature = -1.0;
-    config = "";
-    envFile = ".env";
-    noStream = false;
-): int =
-  ## Fullscreen terminal UI. Returns a process exit code.
-  setControlCHook(onCtrlC)
-  var ov = emptyOverrides()
-  ov.model = model
-  ov.provider = provider
-  if temperature >= 0.0:
-    ov.temperature = temperature
-    ov.hasTemperature = true
-  ov.configPath = config
-  ov.envPath = envFile
-  var cfg: TalosConfig
-  try:
-    cfg = loadConfigWithOverrides(ov)
-  except ConfigError as e:
-    printError(e.msg); return 2
-  let llm = buildLLMClient(cfg)
-
-  # Set agent globals so delegate tool can work from this flow.
-  setGlobalLLMClient(llm)
-  setTalosConfig(cfg)
-  let personasPath = defaultPersonasPath()
-  let pReg = loadPersonasSafe(personasPath)
-  setPersonaRegistry(pReg)
-  setDelegationConfig(defaultDelegationConfig())
-
-  let reg = buildRegistry(cfg)
-  var mem = openMemory(cfg)
-  defer: mem.close()
-  return runTui(cfg, llm, reg, mem, noStream,
-                requestSetup = resetDelegationBudget)

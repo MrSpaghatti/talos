@@ -158,7 +158,14 @@ proc wrappedInputLines(text: string; width: int): seq[string] =
     result.add("")
 
 proc render*(bar: var InputBar; tb: var TerminalBuffer; theme: TuiTheme;
-             y: int; width: int; focused: bool) =
+             y: int; width: int; focused: bool): tuple[x, y: int] =
+  ## Renders the input bar and returns the absolute screen position the
+  ## real terminal cursor should be moved to, or (-1, -1) if it
+  ## shouldn't be shown here (unfocused, or nothing rendered). Callers
+  ## must apply this via the real terminal cursor themselves —
+  ## `TerminalBuffer.setCursorPos` below only tracks illwill's internal
+  ## default-write position and never moves the actual hardware cursor.
+  result = (-1, -1)
   let prompt = "> "
   let availWidth = max(width - prompt.len, MinInputWidth)
   let lines = wrappedInputLines(bar.text, availWidth)
@@ -189,4 +196,6 @@ proc render*(bar: var InputBar; tb: var TerminalBuffer; theme: TuiTheme;
     let cursorRunIdx = bytePosToRuneIndex(bar.text, bar.cursorPos)
     let cursorInLastLine = cursorRunIdx - prevLinesRunes
     let cursorX = prompt.len + max(0, min(cursorInLastLine, availWidth))
-    tb.setCursorPos(cursorX, y)
+    let cursorRow = y - nLines + 1 + lastLineIdx
+    if cursorRow >= 0:
+      result = (cursorX, cursorRow)

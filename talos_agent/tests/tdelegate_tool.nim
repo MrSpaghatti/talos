@@ -5,7 +5,7 @@
 ## are pure unit tests that exercise the error-guard paths without running
 ## an agent loop or mock server.
 
-import std/[json, unittest, strutils]
+import std/[json, unittest, strutils, os, times]
 
 import talos_core/config
 import talos_core/delegate
@@ -18,6 +18,16 @@ import talos_agent
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+let testDbPath = getTempDir() / ("talos_delegate_test_" &
+  $getCurrentProcessId() & "_" & $epochTime() & ".db")
+  ## A handful of these tests exercise real delegate-tool execution, which
+  ## opens a Memory via `resolveDbPath(cfg)` and persists messages
+  ## (`delegate_tool.nim`). Without an explicit override here, `cfg.dbPath`
+  ## falls back to the real default (`~/.local/share/talos/talos.db`) —
+  ## every `nimble test` run was silently writing junk sessions into
+  ## whatever database the person running the tests actually uses.
+  ## Cleaned up at the bottom of this file, after all suites have run.
 
 proc resetGlobals() =
   ## Resets global state between tests to avoid cross-test contamination.
@@ -57,7 +67,8 @@ proc initGlobals(
     maxDelegations: maxDelegations,
     personaName: personaName,
   )
-  let cfg = defaultConfig()
+  var cfg = defaultConfig()
+  cfg.dbPath = testDbPath
   setGlobalLLMClient(llm)
   setPersonaRegistry(reg)
   setDelegationConfig(dc)
@@ -176,7 +187,8 @@ suite "delegate: tool registration":
   test "buildRegistry includes delegate when globals are set":
     resetGlobals()
     initGlobals()
-    let cfg = defaultConfig()
+    var cfg = defaultConfig()
+    cfg.dbPath = testDbPath
     let reg = buildRegistry(cfg)
     # Execute a no-op to verify the registry is valid
     let result = reg.execute("delegate", %*{
@@ -205,3 +217,8 @@ suite "delegate: child inherits delegate tool only when the persona allows it":
   test "no LLM configured blocks delegation regardless of the persona flag":
     let persona = PersonaConfig(name: "supervisor", delegateEnabled: true)
     check not childGetsDelegateTool(persona, llmConfigured = false)
+
+for suffix in ["", "-wal", "-shm", "-journal"]:
+  let p = testDbPath & suffix
+  if fileExists(p):
+    try: removeFile(p) except CatchableError: discard

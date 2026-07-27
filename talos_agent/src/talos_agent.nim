@@ -2,15 +2,14 @@
 ##
 ## Provides the user-facing command-line interface for the Talos agent.
 ## Subcommands:
-##   - chat                  Interactive REPL
+##   - chat                  Fullscreen TUI (also the default with no args)
 ##   - ask <question>        One-shot question
 ##   - session <id>          Resume an existing session, then chat
-##   - history               List recent sessions
+##   - sessions              List recent sessions
 ##   - search <query>        Full-text search across stored messages
 ##   - run <persona> <task>  Spawn a named persona agent
 ##   - web                    Start the web UI server
 ##   - daemon                Start the Discord bot daemon
-##   - tui                   Fullscreen terminal UI
 ##
 ## Configuration is loaded by `talos_core/config.loadConfig()`. Per-run
 ## flags `--model`, `--provider`, and `--temperature` override the values
@@ -21,7 +20,7 @@
 ##   - config         RunOverrides + loadConfigWithOverrides
 ##   - cli            Output formatting, input, session listing, persona loading
 ##   - delegate_tool  Delegate tool + buildRegistry
-##   - commands       Chat, ask, session, history, search, run, web, tui
+##   - commands       Chat, ask, session, sessions, search, run, web
 ##   - daemon         Discord daemon command + API wrappers
 
 import talos_agent/state
@@ -36,24 +35,23 @@ export state, config, cli, delegate_tool, commands, daemon
 
 when isMainModule:
   import cligen
+  import std/os as sysos
 
   ## We dispatchMulti so the user invokes subcommands as
   ##   talos_agent chat
   ##   talos_agent ask "what is 2+2?"
   ##   talos_agent session sess_...
-  ##   talos_agent history
+  ##   talos_agent sessions
   ##   talos_agent search "needle"
   ##   talos_agent run code_reviewer "review the auth module"
+  ##
+  ## No subcommand at all is shorthand for `chat` (the fullscreen TUI) —
+  ## cligen's own no-args behavior is to print help, so that case is
+  ## special-cased below instead of going through dispatchMulti.
+  if sysos.paramCount() == 0:
+    quit(cmdChat())
+
   dispatchMulti(
-    [cmdTui,     cmdName = "tui",     help = {
-      "model":       "override model name",
-      "provider":    "override provider (openrouter|vllm)",
-      "temperature": "override sampling temperature (0..2). " &
-                     "Negative means leave at config default.",
-      "config":      "path to TOML config (overrides default)",
-      "envFile":     "path to .env file (default: .env)",
-      "noStream":    "disable token-by-token streaming output",
-    }],
     [cmdChat,    cmdName = "chat",    help = {
       "model":       "override model name",
       "provider":    "override provider (openrouter|vllm)",
@@ -82,7 +80,7 @@ when isMainModule:
       "envFile":     "path to .env file (default: .env)",
       "noStream":    "disable token-by-token streaming output",
     }],
-    [cmdHistory, cmdName = "history", help = {
+    [cmdSessions, cmdName = "sessions", help = {
       "limit":       "max sessions to show",
       "config":      "path to TOML config (overrides default)",
       "envFile":     "path to .env file (default: .env)",
