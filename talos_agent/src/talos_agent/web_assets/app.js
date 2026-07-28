@@ -2,11 +2,11 @@
 // Vanilla JS SPA. Non-streaming (SSE deferred — asynchttpserver limitation).
 
 const API = {
-  async chat(message) {
+  async chat(message, sessionId) {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, sessionId: sessionId || "" }),
     });
     if (!resp.ok) {
       const err = await resp.json();
@@ -40,6 +40,11 @@ const searchToggle = document.getElementById("search-toggle");
 const searchPanel = document.getElementById("search-panel");
 const searchInput = document.getElementById("search-input");
 const searchResults = document.getElementById("search-results");
+
+// Tracks which backend session the next chat message resumes. Empty
+// means "start a new session" — set from a chat response's sessionId,
+// or when the user explicitly picks a past session to continue.
+let currentSessionId = "";
 
 // --- Helpers ---
 function escapeHtml(s) {
@@ -143,7 +148,7 @@ async function sendMessage() {
   scrollToBottom();
 
   try {
-    const result = await API.chat(text);
+    const result = await API.chat(text, currentSessionId);
     // Remove loading indicator.
     if (loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl);
 
@@ -154,7 +159,9 @@ async function sendMessage() {
     if (result.stopReason && result.stopReason !== "finished") {
       addMessage("system", "Stop reason: " + result.stopReason);
     }
-    refreshSessions();
+    currentSessionId = result.sessionId || currentSessionId;
+    await refreshSessions();
+    sessionSelect.value = currentSessionId;
   } catch (e) {
     if (loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl);
     addMessage("system", "Error: " + e.message);
@@ -224,6 +231,8 @@ async function doSearch(query) {
         '<div class="snippet">' + escapeHtml(r.snippet || r.content || "").slice(0, 200) + '</div>';
       div.onclick = () => {
         toggleSearch();
+        currentSessionId = r.sessionId || "";
+        sessionSelect.value = currentSessionId;
         loadSession(r.sessionId);
       };
       searchResults.appendChild(div);
@@ -254,6 +263,7 @@ inputEl.addEventListener("input", () => {
 
 sessionSelect.addEventListener("change", () => {
   const id = sessionSelect.value;
+  currentSessionId = id;
   if (id) {
     loadSession(id);
   } else {

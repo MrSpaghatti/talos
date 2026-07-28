@@ -1,6 +1,7 @@
 ## CLI command handlers: chat, ask, session, sessions, search, run, web.
 
-import std/[os, strutils, strformat, asyncdispatch, asynchttpserver, net]
+import std/[os, strutils, strformat, asyncdispatch, asynchttpserver, net, options]
+import db_connector/db_sqlite
 import talos_core/agent_loop
 import talos_core/build_llm_client
 import talos_core/config
@@ -16,6 +17,7 @@ import talos_agent/delegate_tool
 import talos_agent/state
 import talos_agent/web_server
 import talos_agent/tui/chat_tui
+import talos_agent/session_alias
 import talos_agent/voice
 import tools/shell
 
@@ -30,13 +32,17 @@ proc runOneTurn(
     mem: var Memory;
     userInput: string;
     streamCallback: OnStreamEvent = nil;
+    resumeSessionId: string = "";
 ): AgentResult =
   ## Thin wrapper around `runAgentLoop` so the chat and ask commands
-  ## share their per-turn logic.
+  ## share their per-turn logic. Passing the previous turn's
+  ## `res.sessionId` back in as `resumeSessionId` is what gives the
+  ## interactive REPL real multi-turn memory instead of each line being
+  ## answered as if it were the first message of a new conversation.
   resetDelegationBudget()
   var agentCfg = newAgentConfig(cfg, systemPrompt = TalosSystemPrompt)
   agentCfg.streamCallback = streamCallback
-  runAgentLoop(agentCfg, llm, reg, mem, userInput)
+  runAgentLoop(agentCfg, llm, reg, mem, userInput, resumeSessionId = resumeSessionId)
 
 proc runChatLoop*(
     cfg: TalosConfig;
@@ -45,13 +51,20 @@ proc runChatLoop*(
     mem: var Memory;
     initialBanner: string = "";
     streamCallback: OnStreamEvent = nil;
+    initialSessionId: string = "";
 ): int =
   ## Runs the interactive REPL until EOF or `:quit`. SIGINT between
   ## turns is treated as a clean exit. Returns 0 on clean exit, 1 on
   ## unrecoverable error.
+  ##
+  ## `initialSessionId`, if given, is resumed for the first turn (its
+  ## prior history is loaded into context, not just replayed to stdout);
+  ## every subsequent turn resumes whatever session the previous turn
+  ## returned, so the whole REPL runs as one continuous conversation.
   if initialBanner.len > 0:
     printSystemNote(initialBanner)
   printSystemNote("type :quit to exit; Ctrl+C to interrupt")
+  var sessionId = initialSessionId
   while true:
     if ctrlCRequested:
       printSystemNote("interrupted")
@@ -71,10 +84,11 @@ proc runChatLoop*(
       break
     var res: AgentResult
     try:
-      res = runOneTurn(cfg, llm, reg, mem, trimmed, streamCallback)
+      res = runOneTurn(cfg, llm, reg, mem, trimmed, streamCallback, sessionId)
     except CatchableError as e:
       printError(e.msg)
       continue
+    sessionId = res.sessionId
     # Don't re-print text if streaming already printed it token-by-token.
     if streamCallback == nil:
       printAssistant(res.text)
@@ -112,8 +126,13 @@ proc cmdChat*(
     config = "";
     envFile = ".env";
     noStream = false;
+    alias = "";
 ): int =
   ## Interactive chat mode: fullscreen TUI. Returns a process exit code.
+  ##
+  ## `alias`, if given, resumes the session last used under that name
+  ## (from any surface) instead of starting fresh — see cmdAsk's alias
+  ## doc comment for the full picture.
   setControlCHook(onCtrlC)
   var ov = emptyOverrides()
   ov.model = model
@@ -141,8 +160,18 @@ proc cmdChat*(
   let reg = buildRegistry(cfg)
   var mem = openMemory(cfg)
   defer: mem.close()
+
+  var resumeId = ""
+  if alias.len > 0:
+    let db = open(resolveDbPath(cfg), "", "", "")
+    initSessionAliasSchema(db)
+    let existing = getSessionForAlias(db, alias)
+    if existing.isSome: resumeId = existing.get()
+    db.close()
+
   return runTui(cfg, llm, reg, mem, noStream,
-                requestSetup = resetDelegationBudget)
+                requestSetup = resetDelegationBudget,
+                initialSessionId = resumeId, aliasName = alias)
 
 proc cmdAsk*(
     question: seq[string];
@@ -153,8 +182,15 @@ proc cmdAsk*(
     envFile = ".env";
     noStream = false;
     plan = false;
+    alias = "";
 ): int =
   ## Single-shot question mode.
+  ##
+  ## `alias`, if given, resumes the session last used under that name
+  ## (from any surface — CLI, TUI, or a Discord thread aliased via
+  ## `!alias set <name>`) instead of starting fresh, and updates the
+  ## alias to point at this turn's session afterward. This is what lets
+  ## a conversation started on one surface continue on another.
   if question.len == 0:
     printError("ask requires a question")
     return 2
@@ -186,6 +222,21 @@ proc cmdAsk*(
   defer: mem.close()
   let userInput = question.join(" ")
 
+  var resumeId = ""
+  if alias.len > 0:
+    let db = open(resolveDbPath(cfg), "", "", "")
+    initSessionAliasSchema(db)
+    let existing = getSessionForAlias(db, alias)
+    if existing.isSome: resumeId = existing.get()
+    db.close()
+
+  proc saveAlias(sid: string) =
+    if alias.len == 0: return
+    let db = open(resolveDbPath(cfg), "", "", "")
+    initSessionAliasSchema(db)
+    setSessionAlias(db, alias, sid)
+    db.close()
+
   if plan:
     # --- Plan-Execute mode ---
     var planRes: PlanResult
@@ -204,11 +255,13 @@ proc cmdAsk*(
         stepCallback = proc(step: PlanStep) {.gcsafe, raises: [].} =
           {.cast(raises: []).}:
             stdout.writeLine(formatStepStatus(step))
-            stdout.flushFile())
+            stdout.flushFile(),
+        resumeSessionId = resumeId)
     except PlanError as e:
       printError("Plan generation failed: " & e.msg); return 1
     except CatchableError as e:
       printError(e.msg); return 1
+    saveAlias(planRes.sessionId)
     if noStream:
       stdout.writeLine(planRes.finalAnswer)
     else:
@@ -220,7 +273,7 @@ proc cmdAsk*(
   try:
     if noStream:
       let agentCfg = newAgentConfig(cfg, systemPrompt = TalosSystemPrompt)
-      res = runAgentLoop(agentCfg, llm, reg, mem, userInput)
+      res = runAgentLoop(agentCfg, llm, reg, mem, userInput, resumeSessionId = resumeId)
     else:
       var agentCfg = newAgentConfig(cfg, systemPrompt = TalosSystemPrompt)
       agentCfg.streamCallback = proc(event: ChatCompletionStreamEvent) {.gcsafe, raises: [].} =
@@ -228,9 +281,10 @@ proc cmdAsk*(
           if event.kind == sekContent and event.delta.len > 0:
             stdout.write(event.delta)
             stdout.flushFile()
-      res = runAgentLoop(agentCfg, llm, reg, mem, userInput)
+      res = runAgentLoop(agentCfg, llm, reg, mem, userInput, resumeSessionId = resumeId)
   except CatchableError as e:
     printError(e.msg); return 1
+  saveAlias(res.sessionId)
   stdout.writeLine(res.text)
   if res.stopReason != asrFinished:
     return 3
@@ -284,10 +338,6 @@ proc cmdSession*(
   printSystemNote(
     fmt"resuming session {sessionId} ({history.len} messages)")
   replayHistory(history)
-  ## NOTE: runAgentLoop always opens a *new* session under the hood.
-  printSystemNote(
-    "starting a new session for follow-up turns " &
-    "(history is read-only here)")
   var streamCb: OnStreamEvent = nil
   if not noStream:
     streamCb = proc(event: ChatCompletionStreamEvent) {.gcsafe, raises: [].} =
@@ -298,6 +348,7 @@ proc cmdSession*(
   discard runChatLoop(
     cfg, llm, reg, mem,
     initialBanner = fmt"session: provider={cfg.provider} model={activeModel(cfg)}",
+    initialSessionId = sessionId,
     streamCallback = streamCb,
   )
   return 0

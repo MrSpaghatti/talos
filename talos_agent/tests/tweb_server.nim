@@ -119,6 +119,29 @@ suite "web_server POST /api/chat":
       check parseJson(body)["text"].getStr() == "hello from web"
       client.close()
 
+  test "sessionId in the response resumes the same conversation on the next request":
+    llmServer.enqueue("200 OK", SuccessBody)
+    llmServer.enqueue("200 OK", SuccessBody)
+    let ws = newTestServer(llmServer)
+    withServer ws:
+      let client = newAsyncHttpClient()
+      client.headers = newHttpHeaders([("Content-Type", "application/json")])
+      let resp1 = waitFor client.post(
+        "http://127.0.0.1:" & $ws.port & "/api/chat",
+        body = $(%*{"message": "remember the number 42"}))
+      let sid = parseJson(waitFor resp1.body)["sessionId"].getStr()
+      check sid.len > 0
+
+      let resp2 = waitFor client.post(
+        "http://127.0.0.1:" & $ws.port & "/api/chat",
+        body = $(%*{"message": "what number?", "sessionId": sid}))
+      check resp2.code == Http200
+      check parseJson(waitFor resp2.body)["sessionId"].getStr() == sid
+      # The second LLM call must carry the first turn forward — proves the
+      # session was actually resumed, not just accepted and ignored.
+      check "remember the number 42" in llmServer.requestBodies[1]
+      client.close()
+
   test "missing message field returns 400":
     let ws = newTestServer(llmServer)
     withServer ws:

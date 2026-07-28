@@ -29,3 +29,4 @@ task test, "Run all tests":
   exec "nim c --path:src -r tests/test_thread_mapping.nim"
   exec "nim c --path:src -r tests/test_thread_reconnection.nim"
   exec "nim c --path:src --threads:on -r tests/test_daemon_delegation.nim"
+  exec "nim c --path:src -r tests/test_session_alias.nim"

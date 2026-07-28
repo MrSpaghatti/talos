@@ -12,6 +12,7 @@ import std/[strutils, os]
 import std/unicode
 import std/terminal as std_terminal
 import illwill
+import db_connector/db_sqlite
 import talos_core/config
 import talos_core/llm_client
 import talos_core/tool_registry
@@ -19,6 +20,7 @@ import talos_core/memory
 import talos_core/agent_loop
 import talos_core/token_counter
 import talos_agent/cli
+import talos_agent/session_alias
 import talos_agent/voice
 
 import theme
@@ -43,6 +45,11 @@ type
     statusMsg*: string
     noStream*: bool
     currentSessionId*: string
+    aliasName*: string
+      ## If non-empty, every turn's resulting session is saved under this
+      ## name (talos_agent/session_alias.nim) so another surface — the
+      ## CLI's `ask --alias`, or a Discord thread aliased via `!alias set`
+      ## — can pick up this exact conversation later.
     activeOverlay*: Overlay
       ## `oNone` when no floating pane is open. While active, it owns
       ## all keyboard input instead of the normal chat input bar.
@@ -280,11 +287,21 @@ proc runAgentTurn(ts: TuiState; userInput: string) =
       ts.statusMsg = "thinking..."
     ts.dirty = true
 
-  # Run the agent loop (blocks until done)
+  # Run the agent loop (blocks until done). Resuming ts.currentSessionId
+  # is what makes this turn part of the same conversation as the last one
+  # instead of a fresh, historyless session each time — it's also what
+  # makes /sessions' "load a past session" picker actually continue that
+  # session rather than just replaying it to the screen for one turn.
   var res: AgentResult
   try:
-    res = runAgentLoop(agentCfg, ts.llm, ts.reg, ts.mem, userInput)
+    res = runAgentLoop(agentCfg, ts.llm, ts.reg, ts.mem, userInput,
+                        resumeSessionId = ts.currentSessionId)
     ts.currentSessionId = res.sessionId
+    if ts.aliasName.len > 0:
+      let db = open(resolveDbPath(ts.cfg), "", "", "")
+      initSessionAliasSchema(db)
+      setSessionAlias(db, ts.aliasName, ts.currentSessionId)
+      db.close()
     ts.refreshTokenEstimate()
   except CatchableError as e:
     ts.transcript.addError(e.msg)
@@ -331,6 +348,7 @@ proc handleSlashCommand(ts: TuiState; raw: string) =
     ts.transcript.addSystem(
       "provider=" & ts.cfg.provider & " model=" & ts.llm.model &
       " session=" & (if ts.currentSessionId.len > 0: ts.currentSessionId else: "(new)") &
+      (if ts.aliasName.len > 0: " alias=" & ts.aliasName else: "") &
       " tokens=~" & $ts.tokenEstimate & " turn=" & $ts.turnCount)
   of "help":
     const helpRows = [
@@ -373,6 +391,32 @@ proc handleSlashCommand(ts: TuiState; raw: string) =
   else:
     ts.transcript.addSystem("unknown command: /" & cmd & " (try /help)")
 
+proc loadSessionIntoTranscript(ts: TuiState; sessionId: string) =
+  ## Replays a session's stored history into the transcript and switches
+  ## ts.currentSessionId to it, so the *next* turn resumes it for real
+  ## instead of just having replayed it for display. Shared by the
+  ## /sessions picker and by resuming an aliased session at startup.
+  try:
+    let history = getHistory(ts.mem, sessionId)
+    ts.transcript.clear()
+    for m in history:
+      case m.role
+      of crSystem: discard
+      of crUser: ts.transcript.addUser(m.content)
+      of crAssistant:
+        if m.content.len > 0:
+          ts.transcript.addAssistant(m.content)
+        elif m.toolCalls.len > 0:
+          for tc in m.toolCalls:
+            ts.transcript.addToolCall(tc.name, tc.arguments)
+      of crTool:
+        ts.transcript.addToolResult(m.name, m.content)
+    ts.currentSessionId = sessionId
+    ts.updateStatus()
+    ts.refreshTokenEstimate()
+  except CatchableError as e:
+    ts.transcript.addError("failed to load session: " & e.msg)
+
 proc applyOverlayResult(ts: TuiState; res: OverlayResult) =
   ## Closes the active overlay and applies a confirmed selection.
   let kind = ts.activeOverlay.kind
@@ -381,26 +425,7 @@ proc applyOverlayResult(ts: TuiState; res: OverlayResult) =
     return
   case kind
   of oSessions:
-    try:
-      let history = getHistory(ts.mem, res.id)
-      ts.transcript.clear()
-      for m in history:
-        case m.role
-        of crSystem: discard
-        of crUser: ts.transcript.addUser(m.content)
-        of crAssistant:
-          if m.content.len > 0:
-            ts.transcript.addAssistant(m.content)
-          elif m.toolCalls.len > 0:
-            for tc in m.toolCalls:
-              ts.transcript.addToolCall(tc.name, tc.arguments)
-        of crTool:
-          ts.transcript.addToolResult(m.name, m.content)
-      ts.currentSessionId = res.id
-      ts.updateStatus()
-      ts.refreshTokenEstimate()
-    except CatchableError as e:
-      ts.transcript.addError("failed to load session: " & e.msg)
+    loadSessionIntoTranscript(ts, res.id)
   of oModel:
     case ts.cfg.provider
     of "vllm": ts.cfg.vllmModel = res.id
@@ -415,8 +440,14 @@ proc applyOverlayResult(ts: TuiState; res: OverlayResult) =
 
 proc runTui*(cfg: TalosConfig; llm: LLMClient; reg: ToolRegistry;
              mem: Memory; noStream = false;
-             requestSetup: proc() {.gcsafe, raises: [].} = nil): int =
+             requestSetup: proc() {.gcsafe, raises: [].} = nil;
+             initialSessionId = ""; aliasName = ""): int =
   ## Run the fullscreen TUI. Returns 0 on clean exit, 1 on error.
+  ##
+  ## If `initialSessionId` is given, that session's history is loaded and
+  ## resumed instead of starting fresh. If `aliasName` is given, every
+  ## turn's resulting session is saved under that name so another surface
+  ## can pick up the same conversation later.
 
   if getEnv("TERM") == "dumb":
     stderr.writeLine("Error: TERM=dumb — TUI requires a real terminal.")
@@ -452,9 +483,12 @@ proc runTui*(cfg: TalosConfig; llm: LLMClient; reg: ToolRegistry;
     input: newInputBar(multiline = true),
     streaming: newStreamingRegion(w),
     currentSessionId: "",
+    aliasName: aliasName,
     noStream: noStream,
     requestSetup: requestSetup,
   )
+  if initialSessionId.len > 0:
+    loadSessionIntoTranscript(ts, initialSessionId)
   ts.updateStatus()
 
   try:

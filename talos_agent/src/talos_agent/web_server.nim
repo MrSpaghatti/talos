@@ -155,6 +155,7 @@ proc handleChat(ctx: WebServerContext; req: Request) {.async.} =
   try:
     let bodyJson = parseJson(req.body)
     let message = bodyJson{"message"}.getStr("")
+    let sessionId = bodyJson{"sessionId"}.getStr("")
     if message.len == 0:
       await respondError(req, Http400, "message is required")
       return
@@ -166,7 +167,8 @@ proc handleChat(ctx: WebServerContext; req: Request) {.async.} =
       ctx.ws.requestSetup()
     var agentCfg = newAgentConfig(ctx.ws.cfg, systemPrompt = TalosSystemPrompt)
     let res = runAgentLoop(
-      agentCfg, ctx.ws.llm, ctx.ws.registry, ctx.ws.mem, message)
+      agentCfg, ctx.ws.llm, ctx.ws.registry, ctx.ws.mem, message,
+      resumeSessionId = sessionId)
 
     let body = %*{
       "text": res.text,

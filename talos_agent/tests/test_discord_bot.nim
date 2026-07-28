@@ -240,3 +240,59 @@ suite "DiscordBot (DI-based)":
     bot.shard.userId = "bot_user_id"
     waitFor bot.onMessageCreate(msg)
     check api.calls.len == 0
+
+  test "!alias set with no mapped thread session tells the caller to talk first":
+    let (bot, api, db) = makeBot(users = @["user1"])
+    defer: db.close()
+    let msg = Message(
+      id: "msg_alias_1",
+      author: MockUser(id: "user1", username: "TestUser", bot: false),
+      content: "!alias set project-x",
+      channel_id: "chan_no_thread",
+      guild_id: some("guild1"),
+      mention_users: @[],
+    )
+    bot.shard.userId = "bot_user_id"
+    waitFor bot.onMessageCreate(msg)
+    var foundResponse = false
+    for call in api.calls:
+      if call.kind == mockSendMessage:
+        foundResponse = true
+        check "No active session" in call.content
+    check foundResponse
+
+  test "!alias set on a mapped thread aliases its session, and !alias show finds it":
+    let (bot, api, db) = makeBot(users = @["user1"])
+    defer: db.close()
+    setThreadMapping(db, "thread_alias", "sess_alias_target", "chan1", "guild1")
+    let setMsg = Message(
+      id: "msg_alias_set",
+      author: MockUser(id: "user1", username: "TestUser", bot: false),
+      content: "!alias set project-x",
+      channel_id: "thread_alias",
+      guild_id: some("guild1"),
+      mention_users: @[],
+    )
+    bot.shard.userId = "bot_user_id"
+    waitFor bot.onMessageCreate(setMsg)
+    var setConfirmed = false
+    for call in api.calls:
+      if call.kind == mockSendMessage:
+        setConfirmed = true
+        check "project-x" in call.content
+    check setConfirmed
+
+    let showMsg = Message(
+      id: "msg_alias_show",
+      author: MockUser(id: "user1", username: "TestUser", bot: false),
+      content: "!alias show project-x",
+      channel_id: "thread_alias",
+      guild_id: some("guild1"),
+      mention_users: @[],
+    )
+    waitFor bot.onMessageCreate(showMsg)
+    var foundTarget = false
+    for call in api.calls:
+      if call.kind == mockSendMessage and "sess_alias_target" in call.content:
+        foundTarget = true
+    check foundTarget

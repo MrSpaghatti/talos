@@ -30,6 +30,8 @@ talos_agent/tests/test_discord_mocks
 talos_agent/tests/test_e2e_discord
 talos_agent/tests/test_thread_mapping
 talos_agent/tests/test_thread_reconnection
+talos_agent/tests/test_session_alias
+talos_agent/tests/test_daemon_delegation
 talos_code/src/talos_code/talos_code
 talos_code/tcode_runner
 talos_code/tests/tcode_runner

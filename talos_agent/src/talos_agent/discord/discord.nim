@@ -16,6 +16,7 @@ import talos_core/[permission, agent_dispatcher, message_chunker, util]
 import dimscord
 import discord_bridge
 import thread_mapping
+import talos_agent/session_alias
 
 type
   SendMessageFn* = proc (channelId, content: string): Future[string] {.async, gcsafe.}
@@ -78,6 +79,16 @@ proc onMessageCreate*(bot: DiscordBot; msg: discord_mocks.Message) {.async, gcsa
       return
     let cmd = parts[0]
     let args = if parts.len > 1: parts[1] else: ""
+    # !alias needs bot.db (the current thread's mapped session, if any) —
+    # handled here rather than through handleCommand, which is otherwise
+    # a pure function of (cmd, args, authorId, cfg) with no DB access.
+    if cmd.toLowerAscii() == "alias":
+      let currentSession = getSessionForThread(bot.db, msg.channel_id)
+      let response = handleAliasCommand(bot.db, args, currentSession)
+      let chunks = chunkMessage(response)
+      for chunk in chunks:
+        discard await bot.sendMessage(msg.channel_id, chunk)
+      return
     let cmdResult = handleCommand(cmd, args, msg.author.id, bot.config)
     let chunks = chunkMessage(cmdResult.response)
     for chunk in chunks:
