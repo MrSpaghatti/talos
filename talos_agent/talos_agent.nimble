@@ -21,6 +21,8 @@ task test, "Run all tests":
   exec "nim c --path:src -r tests/tbench.nim"
   exec "nim c --path:src --threads:on -r tests/tweb_server.nim"
   exec "nim c --path:src -r tests/ttui_streaming.nim"
+  exec "nim c --path:src -r tests/test_transcript.nim"
+  exec "nim c --path:src -r tests/test_input_bar.nim"
   exec "nim c --path:src -r tests/test_discord_mocks.nim"
   exec "nim c --path:src -r tests/test_discord_commands.nim"
   exec "nim c --path:src -r tests/test_discord_bot.nim"

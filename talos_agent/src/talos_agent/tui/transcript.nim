@@ -54,9 +54,17 @@ proc wrapLine(text: string; maxWidth: int): seq[string] =
   if result.len == 0:
     result.add("")
 
+proc entryLines(e: TranscriptEntry; width: int): seq[string] =
+  ## Wrapped lines for one entry, plus a trailing blank line so consecutive
+  ## messages aren't visually packed edge-to-edge in the transcript. Used
+  ## by both totalLines and render so the two stay in lockstep — nothing
+  ## outside this module assumes a specific line count per entry.
+  result = wrapLine(e.content, width)
+  result.add("")
+
 proc totalLines(region: TranscriptRegion): int =
   for e in region.entries:
-    result += wrapLine(e.content, region.wrapWidth).len
+    result += entryLines(e, region.wrapWidth).len
 
 proc addMessage*(region: var TranscriptRegion; role: MessageRole;
                  content: string; detail: string = "") =
@@ -122,7 +130,8 @@ proc render*(region: var TranscriptRegion; tb: var TerminalBuffer;
 
   var currentLine = 0
   for e in region.entries:
-    let lines = wrapLine(e.content, region.wrapWidth)
+    let lines = entryLines(e, region.wrapWidth)
+    let contentLineCount = lines.len - 1  ## last entry in `lines` is the blank separator
     let entryStart = currentLine
     let entryEnd = currentLine + lines.len
     currentLine = entryEnd
@@ -136,25 +145,37 @@ proc render*(region: var TranscriptRegion; tb: var TerminalBuffer;
 
       tb.write(0, renderRow, repeat(' ', region.wrapWidth))
 
+      # The blank separator line after each entry's content stays blank —
+      # no role prefix to draw on it.
+      if i >= contentLineCount: continue
+
       case e.role
       of mrUser:
         tb.setForegroundColor(theme.userMsg, bright = true)
-        tb.write(0, renderRow, "> " & line)
+        let prefix = if i == 0: "> " else: "  "
+        tb.write(0, renderRow, prefix & line)
       of mrAssistant:
+        let labelOn = "Talos  "
+        let labelOff = repeat(' ', labelOn.len)
+        tb.setForegroundColor(theme.accent, bright = true)
+        tb.write(0, renderRow, if i == 0: labelOn else: labelOff)
         tb.setForegroundColor(theme.assistantMsg)
-        tb.write(0, renderRow, line)
+        tb.write(labelOn.len, renderRow, line)
       of mrTool:
         tb.setForegroundColor(theme.toolCall)
-        tb.write(0, renderRow, "  " & line)
+        let prefix = if i == 0: "\xE2\x86\x92 " else: "  "  ## "→ "
+        tb.write(0, renderRow, prefix & line)
       of mrToolResult:
         tb.setForegroundColor(theme.toolResult)
         tb.write(0, renderRow, "  " & line)
       of mrSystem:
         tb.setForegroundColor(theme.muted)
-        tb.write(0, renderRow, "[system] " & line)
+        let prefix = if i == 0: "[system] " else: "         "
+        tb.write(0, renderRow, prefix & line)
       of mrError:
         tb.setForegroundColor(theme.errorMsg)
-        tb.write(0, renderRow, "[error] " & line)
+        let prefix = if i == 0: "[error] " else: "        "
+        tb.write(0, renderRow, prefix & line)
 
     if currentLine >= viewBottom:
       break

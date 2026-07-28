@@ -174,8 +174,10 @@ proc render*(bar: var InputBar; tb: var TerminalBuffer; theme: TuiTheme;
   for i in 0..<nLines:
     let row = y - nLines + 1 + i
     if row < 0: continue
+    tb.setForegroundColor(fgNone)
     tb.write(0, row, repeat(' ', width))
     if i == 0:
+      tb.setForegroundColor(theme.inputPrompt, bright = true)
       tb.write(0, row, prompt)
     else:
       tb.write(0, row, repeat(' ', prompt.len))

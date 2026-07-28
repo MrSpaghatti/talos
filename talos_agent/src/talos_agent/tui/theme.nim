@@ -25,7 +25,7 @@ proc defaultTheme*(): TuiTheme =
     userMsg:       fgGreen,
     assistantMsg:  fgNone,
     toolCall:      fgYellow,
-    toolResult:    fgYellow,
+    toolResult:    fgCyan,
     errorMsg:      fgRed,
     statusBarFg:   fgBlack,
     statusBarBg:   bgWhite,
