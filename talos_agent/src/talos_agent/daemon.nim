@@ -5,6 +5,7 @@ import db_connector/db_sqlite
 import talos_core/agent_dispatcher
 import talos_core/build_llm_client
 import talos_core/config
+import talos_core/crash_report
 import talos_agent/discord/discord
 import talos_agent/discord/discord_bridge
 import talos_agent/discord/discord_mocks
@@ -55,13 +56,17 @@ proc makeArchiveThreadFn(api: RealDiscordApi): ArchiveThreadFn =
     await api.archiveThread(threadId)
   return archive
 
-proc sendWithLogging*(sendFn: SendMessageFn; channelId, content: string): Future[void] {.async.} =
-  ## Sends a message to Discord, logging errors to stderr instead of
-  ## letting asyncCheck silently swallow them.
+proc sendWithLogging*(sendFn: SendMessageFn; channelId, content: string;
+                       ring: RingLogger = nil): Future[void] {.async.} =
+  ## Sends a message to Discord, logging errors to stderr (and, if a
+  ## RingLogger is given, into it too) instead of letting asyncCheck
+  ## silently swallow them.
   try:
     discard await sendFn(channelId, content)
   except CatchableError as e:
-    stderr.writeLine("[daemon] failed to send message: " & e.msg)
+    let line = "failed to send message: " & e.msg
+    stderr.writeLine("[daemon] " & line)
+    if ring != nil: ring.log(line)
 
 # ---------------------------------------------------------------------------
 # Daemon command
@@ -85,6 +90,10 @@ proc cmdDaemon*(
   ## 8. Starts the Discord gateway session.
   ## 9. Handles SIGINT/SIGTERM for graceful shutdown.
   setControlCHook(onCtrlC)
+  # Recent-activity ring buffer, folded into the crash report on a fatal
+  # error — gives a crash report more context than the exception alone
+  # when nobody was watching the terminal/journal at the time.
+  var ring = newRingLogger()
   var ov = emptyOverrides()
   ov.configPath = config
   ov.envPath = envFile
@@ -94,6 +103,7 @@ proc cmdDaemon*(
   except ConfigError as e:
     printError(e.msg); return 2
   let discordCfg = loadDiscordConfig(discordConfig)
+  ring.log("config loaded")
 
   # Read Discord bot token from the configured env var
   let tokenEnv = discordCfg.tokenEnv
@@ -151,6 +161,8 @@ proc cmdDaemon*(
   threadDb.exec(sql"PRAGMA busy_timeout=5000")
   initThreadMappingSchema(threadDb)
 
+  ring.log("memory + thread-mapping DB opened")
+
   # Create Dimscord client
   let discord = newDiscordClient(token)
 
@@ -171,7 +183,7 @@ proc cmdDaemon*(
                  else: r.responseText
       let chunks = chunkMessage(text)
       for chunk in chunks:
-        asyncCheck sendWithLogging(sendFn, r.surfaceId, chunk)
+        asyncCheck sendWithLogging(sendFn, r.surfaceId, chunk, ring)
   # Discord's typing indicator expires after ~10s; refresh it once per
   # ReAct turn so it stays lit for the length of a multi-turn agent run
   # instead of just the first ~10s. See agent_loop.AgentConfig.turnCallback.
@@ -198,6 +210,8 @@ proc cmdDaemon*(
     shard = shard,
   )
 
+  ring.log("starting Discord gateway session")
+
   # Graceful shutdown handled by the setControlCHook above
   # Start the Discord bot (blocks until session ends or error)
   # `finally` always runs on the way out of this try (normal return,
@@ -209,6 +223,25 @@ proc cmdDaemon*(
   try:
     waitFor startDiscordBot(discord, bot)
   except CatchableError as e:
+    ring.log("daemon crashed: " & e.msg)
+    # The crash report file is the durable source of truth; write it
+    # unconditionally before attempting anything that touches the network.
+    writeCrashReport(defaultCrashReportPath(), e, ring)
+    # Best-effort DM to the first configured admin — bonus-effort only,
+    # under a hard timeout so an unreachable Discord connection (plausibly
+    # the cause of the crash itself) can't hang shutdown.
+    if discordCfg.admins.allow.len > 0:
+      let adminId = discordCfg.admins.allow[0]
+      let crashMsg = "Talos daemon crashed: " & e.msg
+      proc notifyAdmin(): Future[void] {.async.} =
+        let dmId = await api.getOrCreateDM(adminId)
+        discard await api.sendMessage(dmId, crashMsg)
+      try:
+        let completed = waitFor notifyAdmin().withTimeout(5000)
+        if not completed:
+          stderr.writeLine("[daemon] crash DM to admin timed out")
+      except CatchableError as notifyErr:
+        stderr.writeLine("[daemon] failed to send crash DM: " & notifyErr.msg)
     printError("Daemon crashed: " & e.msg)
     return 1
   finally:

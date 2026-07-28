@@ -52,6 +52,13 @@ proc archiveThread*(api: RealDiscordApi; threadId: string) {.async.} =
     $ %*{"archived": true}
   )
 
+proc getOrCreateDM*(api: RealDiscordApi; userId: string): Future[string] {.async.} =
+  ## Opens (or fetches the existing) DM channel with the given user.
+  ## Returns the DM channel ID, suitable for sendMessage. Used for
+  ## best-effort crash notifications to a configured admin.
+  let dm = await api.restApi.createUserDm(userId)
+  return dm.id
+
 proc convertMessage*(msg: dimscord.Message): MockMessage =
   ## Converts a Dimscord Message to our internal MockMessage type
   ## so it can be fed to DiscordBot.onMessageCreate.
