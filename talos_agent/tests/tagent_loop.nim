@@ -228,6 +228,7 @@ proc smallAgentConfig(maxIterations = 5; threshold = 3): AgentConfig =
     maxIterations: maxIterations,
     loopDetectionThreshold: threshold,
     systemPrompt: "test-system",
+    persist: true,
   )
 
 # ---------------------------------------------------------------------------
@@ -581,6 +582,108 @@ suite "agent_loop: resumeSessionId":
       check "Bob" notin msg.content
     for msg in historyB:
       check "Alice" notin msg.content
+
+suite "agent_loop: persist=false (ephemeral runs, e.g. /btw)":
+  test "writes nothing to memory for a brand-new (no resumeSessionId) run":
+    let h = newHarness()
+    startHarness(h)
+    defer: stopHarness(h)
+
+    h.enqueueText("ephemeral answer")
+
+    let llm = makeClient(h)
+    let reg = newToolRegistry()
+    var mem = newMemory(":memory:")
+    defer: mem.close()
+
+    var cfg = smallAgentConfig()
+    cfg.persist = false
+    let res = runAgentLoop(cfg, llm, reg, mem, userInput = "btw question")
+
+    check res.text == "ephemeral answer"
+    check res.sessionId == ""
+    check not mem.hasSession(res.sessionId)
+
+  test "sees an existing session's history but appends nothing to it":
+    let h = newHarness()
+    startHarness(h)
+    defer: stopHarness(h)
+
+    h.enqueueText("real answer")
+    h.enqueueText("ephemeral answer")
+
+    let llm = makeClient(h)
+    let reg = newToolRegistry()
+    var mem = newMemory(":memory:")
+    defer: mem.close()
+
+    let cfg = smallAgentConfig()
+    let sid = "sess_real_conversation"
+
+    # A real, persisted turn first.
+    let realRes = runAgentLoop(
+      cfg, llm, reg, mem, userInput = "remember the number 42",
+      resumeSessionId = sid)
+    check realRes.text == "real answer"
+    check mem.getHistory(sid).len == 3  # system, user, assistant
+
+    # Then an ephemeral /btw against the same session.
+    var btwCfg = cfg
+    btwCfg.persist = false
+    let btwRes = runAgentLoop(
+      btwCfg, llm, reg, mem, userInput = "what number did I say?",
+      resumeSessionId = sid)
+    check btwRes.text == "ephemeral answer"
+
+    # The /btw call must have SEEN the real turn (context) ...
+    check h.server.getLastRequestBody().contains("remember the number 42")
+    # ... but left no trace of itself in memory: history is exactly what
+    # it was before the /btw call, unchanged.
+    let historyAfter = mem.getHistory(sid)
+    check historyAfter.len == 3
+    check historyAfter[1].content == "remember the number 42"
+    for msg in historyAfter:
+      check "what number did I say?" notin msg.content
+      check "ephemeral answer" notin msg.content
+
+  test "a normal turn right after a /btw sees no trace of it":
+    let h = newHarness()
+    startHarness(h)
+    defer: stopHarness(h)
+
+    h.enqueueText("real answer")
+    h.enqueueText("ephemeral answer")
+    h.enqueueText("second real answer")
+
+    let llm = makeClient(h)
+    let reg = newToolRegistry()
+    var mem = newMemory(":memory:")
+    defer: mem.close()
+
+    let cfg = smallAgentConfig()
+    let sid = "sess_normal_then_btw_then_normal"
+
+    discard runAgentLoop(
+      cfg, llm, reg, mem, userInput = "first real message",
+      resumeSessionId = sid)
+
+    var btwCfg = cfg
+    btwCfg.persist = false
+    discard runAgentLoop(
+      btwCfg, llm, reg, mem, userInput = "an ephemeral side question",
+      resumeSessionId = sid)
+
+    discard runAgentLoop(
+      cfg, llm, reg, mem, userInput = "second real message",
+      resumeSessionId = sid)
+
+    # system, user1, assistant1, user2, assistant2 — the /btw exchange
+    # never appears.
+    let history = mem.getHistory(sid)
+    check history.len == 5
+    check history[3].content == "second real message"
+    for msg in history:
+      check "ephemeral" notin msg.content
 
 suite "agent_loop: convenience overload":
   test "TalosConfig overload threads maxLoopIterations through":

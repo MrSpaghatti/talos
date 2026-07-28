@@ -5,7 +5,7 @@ license       = "MIT"
 srcDir        = "src"
 bin           = @["talos_agent"]
 requires "nim >= 2.0.0"
-requires "https://github.com/mrspaghatti/talos_core#v1.3.0"
+requires "https://github.com/mrspaghatti/talos_core#v1.4.1"
 requires "db_connector >= 0.1.0"
 requires "illwill >= 0.4.0"
 requires "dimscord >= 1.0.0"

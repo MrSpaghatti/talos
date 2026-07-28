@@ -325,10 +325,65 @@ proc runAgentTurn(ts: TuiState; userInput: string) =
   ts.updateStatus()
   ts.dirty = true
 
+proc runBtwTurn(ts: TuiState; question: string) =
+  ## Runs `/btw <question>` through the same LLM call path as a normal
+  ## turn (same system prompt, same history up to now) but with
+  ## agentCfg.persist = false: neither the question nor the answer is
+  ## written to memory, so it never shows up in `talos_agent search`/
+  ## `history`, and the very next normal turn sees the conversation
+  ## exactly as if this exchange had never happened. Deliberately does
+  ## NOT touch ts.currentSessionId/ts.aliasName — an ephemeral question
+  ## must not become the conversation other surfaces resume into.
+  if ts.requestSetup != nil:
+    ts.requestSetup()
+  ts.transcript.addUser("(btw) " & question)
+  ts.updateStatus()
+  ts.dirty = true
+
+  var agentCfg = newAgentConfig(ts.cfg, systemPrompt = TalosSystemPrompt)
+  agentCfg.persist = false
+  if not ts.noStream:
+    ts.streaming = newStreamingRegion(ts.transcript.wrapWidth)
+    agentCfg.streamCallback = proc(event: ChatCompletionStreamEvent) {.gcsafe, raises: [].} =
+      if event.kind == sekContent and event.delta.len > 0:
+        ts.streaming.append(event.delta)
+        ts.dirty = true
+
+  ts.turnCount = 0
+  agentCfg.turnCallback = proc() {.gcsafe, raises: [].} =
+    ts.turnCount += 1
+    ts.statusMsg = "thinking (btw, not saved)..."
+    ts.dirty = true
+
+  var res: AgentResult
+  try:
+    res = runAgentLoop(agentCfg, ts.llm, ts.reg, ts.mem, question,
+                        resumeSessionId = ts.currentSessionId)
+  except CatchableError as e:
+    ts.transcript.addError(e.msg)
+    ts.updateStatus()
+    ts.dirty = true
+    return
+
+  let streamText = ts.streaming.freeze()
+  ts.streaming.clear()
+
+  if res.text.len > 0:
+    ts.transcript.addAssistant(res.text)
+  elif streamText.len > 0:
+    ts.transcript.addAssistant(streamText)
+  ts.transcript.addSystem("(btw — not saved to this session)")
+
+  ts.updateStatus()
+  ts.dirty = true
+
 proc handleSlashCommand(ts: TuiState; raw: string) =
   ## Dispatches a `/`-prefixed input line as a command instead of
   ## sending it to the agent. `raw` includes the leading slash.
-  let parts = strutils.splitWhitespace(raw[1..^1])
+  let withoutSlash = raw[1..^1]
+  let parts = strutils.splitWhitespace(withoutSlash)
+  let firstSpace = withoutSlash.find(' ')
+  let rest = if firstSpace >= 0: withoutSlash[firstSpace + 1 .. ^1].strip() else: ""
   let cmd = if parts.len > 0: parts[0] else: ""
   case cmd
   of "new":
@@ -340,6 +395,11 @@ proc handleSlashCommand(ts: TuiState; raw: string) =
   of "quit", "exit":
     illwillDeinit()
     quit(0)
+  of "btw":
+    if rest.len == 0:
+      ts.transcript.addSystem("usage: /btw <question> — asked with current context, not saved")
+    else:
+      runBtwTurn(ts, rest)
   of "info":
     # The sidebar shows/hides itself automatically based on terminal
     # width; this is a one-off status line for when the terminal is too
@@ -357,6 +417,7 @@ proc handleSlashCommand(ts: TuiState; raw: string) =
       "/model         switch the active model",
       "/info          print current provider/model/session/tokens",
       "/new           start a fresh session",
+      "/btw <q>       ask with current context, without saving it",
       "/quit, /exit   exit Talos",
       "PageUp/PageDn  scroll the transcript",
       "Up/Down        input history / navigate an open pane",
