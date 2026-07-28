@@ -5,7 +5,7 @@ license       = "MIT"
 srcDir        = "src"
 bin           = @["talos_code"]
 requires      "nim >= 2.0.0"
-requires      "https://github.com/mrspaghatti/talos_core#v1.1.0"
+requires      "https://github.com/mrspaghatti/talos_core#v1.2.0"
 switch("path", "src")
 
 task test, "Run tests":

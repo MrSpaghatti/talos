@@ -6,6 +6,7 @@ import talos_core/agent_dispatcher
 import talos_core/build_llm_client
 import talos_core/config
 import talos_core/crash_report
+import talos_core/heartbeat
 import talos_agent/discord/discord
 import talos_agent/discord/discord_bridge
 import talos_agent/discord/discord_mocks
@@ -209,6 +210,23 @@ proc cmdDaemon*(
     dispatcher = dispatcher,
     shard = shard,
   )
+
+  # Proactive heartbeat — off by default (heartbeatIntervalSec == 0). v1
+  # ships the scheduler plumbing wired end-to-end with a no-op check;
+  # deciding what's actually worth surfacing unprompted is a follow-on now
+  # that the mechanism itself is proven live, not a blocker to landing it.
+  if discordCfg.heartbeatIntervalSec > 0 and discordCfg.admins.allow.len > 0:
+    let adminId = discordCfg.admins.allow[0]
+    let surfaceFn = proc(message: string) =
+      proc deliver(): Future[void] {.async.} =
+        let dmId = await api.getOrCreateDM(adminId)
+        discard await api.sendMessage(dmId, message)
+      asyncCheck deliver()
+    let hb = newHeartbeat(discordCfg.heartbeatIntervalSec * 1000, surfaceFn)
+    hb.addCheck(proc(): Future[Option[string]] {.async.} =
+      return none(string))
+    asyncCheck hb.run()
+    ring.log("heartbeat started (interval=" & $discordCfg.heartbeatIntervalSec & "s)")
 
   ring.log("starting Discord gateway session")
 

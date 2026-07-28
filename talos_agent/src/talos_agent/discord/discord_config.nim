@@ -17,6 +17,11 @@ proc applyDiscordTomlSection(cfg: var DiscordConfig; section, key, val: string) 
     case k
     of "token_env": cfg.tokenEnv = val
     of "prefix": cfg.prefix = val
+    of "heartbeat_interval_sec":
+      try:
+        cfg.heartbeatIntervalSec = parseInt(val)
+      except ValueError:
+        discard
     else: discard
   of "discord.admins":
     case k

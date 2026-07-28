@@ -17,6 +17,8 @@ type
                              ## by default — purely opt-in, no forced default.
     tools*: AccessControl
     daemonDelegation*: bool  ## Enable agent delegation and MCP tools in daemon mode
+    heartbeatIntervalSec*: int  ## Proactive-heartbeat tick interval, in seconds.
+                                 ## 0 (default) disables the heartbeat loop entirely.
 
 proc defaultDiscordConfig*(): DiscordConfig =
   result = DiscordConfig(
@@ -30,7 +32,8 @@ proc defaultDiscordConfig*(): DiscordConfig =
     fileRules: AccessControl(allow: @[], deny: mandatoryDenyPatterns),
     fileSandboxDir: "",
     tools: AccessControl(allow: @[], deny: @[]),
-    daemonDelegation: false
+    daemonDelegation: false,
+    heartbeatIntervalSec: 0
   )
 
 proc toToolAcl*(cfg: DiscordConfig): ToolAcl =
