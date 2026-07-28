@@ -27,6 +27,7 @@ import talos_core/llm_client
 import talos_core/agent_loop
 import talos_core/tool_registry
 import talos_core/memory
+import talos_agent/voice
 
 # ---------------------------------------------------------------------------
 # Embedded assets (compiled into the binary via staticRead)
@@ -163,7 +164,7 @@ proc handleChat(ctx: WebServerContext; req: Request) {.async.} =
 
     if ctx.ws.requestSetup != nil:
       ctx.ws.requestSetup()
-    var agentCfg = newAgentConfig(ctx.ws.cfg)
+    var agentCfg = newAgentConfig(ctx.ws.cfg, systemPrompt = TalosSystemPrompt)
     let res = runAgentLoop(
       agentCfg, ctx.ws.llm, ctx.ws.registry, ctx.ws.mem, message)
 

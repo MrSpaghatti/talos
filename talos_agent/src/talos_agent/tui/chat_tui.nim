@@ -19,6 +19,7 @@ import talos_core/memory
 import talos_core/agent_loop
 import talos_core/token_counter
 import talos_agent/cli
+import talos_agent/voice
 
 import theme
 import transcript
@@ -261,7 +262,7 @@ proc runAgentTurn(ts: TuiState; userInput: string) =
   ts.dirty = true
 
   # Build streaming callback
-  var agentCfg = newAgentConfig(ts.cfg)
+  var agentCfg = newAgentConfig(ts.cfg, systemPrompt = TalosSystemPrompt)
   if not ts.noStream:
     ts.streaming = newStreamingRegion(ts.transcript.wrapWidth)
     agentCfg.streamCallback = proc(event: ChatCompletionStreamEvent) {.gcsafe, raises: [].} =

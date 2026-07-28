@@ -16,6 +16,7 @@ import talos_agent/delegate_tool
 import talos_agent/state
 import talos_agent/web_server
 import talos_agent/tui/chat_tui
+import talos_agent/voice
 import tools/shell
 
 # ---------------------------------------------------------------------------
@@ -33,12 +34,9 @@ proc runOneTurn(
   ## Thin wrapper around `runAgentLoop` so the chat and ask commands
   ## share their per-turn logic.
   resetDelegationBudget()
-  if streamCallback != nil:
-    var agentCfg = newAgentConfig(cfg)
-    agentCfg.streamCallback = streamCallback
-    runAgentLoop(agentCfg, llm, reg, mem, userInput)
-  else:
-    runAgentLoop(cfg, llm, reg, mem, userInput)
+  var agentCfg = newAgentConfig(cfg, systemPrompt = TalosSystemPrompt)
+  agentCfg.streamCallback = streamCallback
+  runAgentLoop(agentCfg, llm, reg, mem, userInput)
 
 proc runChatLoop*(
     cfg: TalosConfig;
@@ -195,7 +193,7 @@ proc cmdAsk*(
       let executionPlan = generatePlan(llm, userInput, reg)
       stdout.writeLine(formatPlan(executionPlan))
       stdout.flushFile()
-      var agentCfg = newAgentConfig(cfg)
+      var agentCfg = newAgentConfig(cfg, systemPrompt = TalosSystemPrompt)
       if not noStream:
         agentCfg.streamCallback = proc(event: ChatCompletionStreamEvent) {.gcsafe, raises: [].} =
           {.cast(raises: []).}:
@@ -221,9 +219,10 @@ proc cmdAsk*(
   var res: AgentResult
   try:
     if noStream:
-      res = runAgentLoop(cfg, llm, reg, mem, userInput)
+      let agentCfg = newAgentConfig(cfg, systemPrompt = TalosSystemPrompt)
+      res = runAgentLoop(agentCfg, llm, reg, mem, userInput)
     else:
-      var agentCfg = newAgentConfig(cfg)
+      var agentCfg = newAgentConfig(cfg, systemPrompt = TalosSystemPrompt)
       agentCfg.streamCallback = proc(event: ChatCompletionStreamEvent) {.gcsafe, raises: [].} =
         {.cast(raises: []).}:
           if event.kind == sekContent and event.delta.len > 0:

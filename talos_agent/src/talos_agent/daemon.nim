@@ -27,6 +27,7 @@ import talos_agent/cli
 import talos_agent/config
 import talos_agent/delegate_tool
 import talos_agent/state
+import talos_agent/voice
 import dimscord
 
 # ---------------------------------------------------------------------------
@@ -196,7 +197,7 @@ proc cmdDaemon*(
         discard
   let dispatcher = newAgentDispatcher(
     callbackProc, cfg, llm, reg, resolveDbPath(cfg), turnCallback = turnCallback,
-    requestSetup = resetDelegationBudget
+    requestSetup = resetDelegationBudget, systemPrompt = TalosSystemPrompt
   )
 
   # Create the DI-based DiscordBot with real API callbacks
