@@ -14,6 +14,9 @@ import talos_core/mcp_tool
 import talos_core/persona
 import talos_core/tool_registry
 import tools/shell
+import tools/browser
+import tools/email
+import talos_agent/email_config
 import talos_agent/state
 
 # ---------------------------------------------------------------------------
@@ -232,6 +235,8 @@ proc buildRegistry*(cfg: TalosConfig = defaultConfig()): ToolRegistry =
   ## delegate tool if agent globals are available.
   result = newToolRegistry()
   result.register(shellTool())
+  result.register(browserTool())
+  result.register(emailTool(toEmailOptions(loadEmailConfig())))
   if cfg.mcpServers.len > 0:
     discard registerMcpServers(result, cfg.mcpServers)
   # Register delegate tool — only if globals are set

@@ -5,11 +5,13 @@ license       = "MIT"
 srcDir        = "src"
 bin           = @["talos_agent"]
 requires "nim >= 2.0.0"
-requires "https://github.com/mrspaghatti/talos_core#v1.4.1"
+requires "https://github.com/mrspaghatti/talos_core#v1.5.0"
 requires "db_connector >= 0.1.0"
 requires "illwill >= 0.4.0"
 requires "dimscord >= 1.0.0"
 requires "cligen >= 1.6.0"
+requires "cdp >= 0.1.0"
+requires "smtp >= 0.1.0"
 switch("path", "src")
 
 task test, "Run all tests":
@@ -32,3 +34,6 @@ task test, "Run all tests":
   exec "nim c --path:src -r tests/test_thread_reconnection.nim"
   exec "nim c --path:src --threads:on -r tests/test_daemon_delegation.nim"
   exec "nim c --path:src -r tests/test_session_alias.nim"
+  exec "nim c --path:src -r tests/test_browser_tool.nim"
+  exec "nim c --path:src -r tests/test_email_config.nim"
+  exec "nim c --path:src -r tests/test_email_tool.nim"

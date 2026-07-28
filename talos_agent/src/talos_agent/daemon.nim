@@ -23,6 +23,9 @@ import talos_core/persona
 import talos_core/delegate
 import talos_core/tool_registry
 import tools/shell
+import tools/browser
+import tools/email
+import talos_agent/email_config
 import talos_agent/cli
 import talos_agent/config
 import talos_agent/delegate_tool
@@ -136,6 +139,15 @@ proc cmdDaemon*(
   # The message-level isUserAllowed() gate alone gave every whitelisted
   # user admin-equivalent shell — weaker gating than file_write.
   reg.register(shellTool(defaultShellOptions(), toToolAcl(discordCfg)))
+
+  # Browser tool — same gating shape as shell: admins and tools.allow get
+  # it, everyone else gets "requires approval".
+  reg.register(browserTool(defaultBrowserOptions(), toToolAcl(discordCfg)))
+
+  # Email tool — same gating shape as shell/browser. Reports "not
+  # configured" for send until ~/.config/talos/email.toml (or
+  # TALOS_EMAIL_SMTP_PASSWORD) is actually set up.
+  reg.register(emailTool(toEmailOptions(loadEmailConfig()), toToolAcl(discordCfg)))
 
   # Delegate + MCP tools — opt-in via daemonDelegation config flag.
   if discordCfg.daemonDelegation:
