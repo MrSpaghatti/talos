@@ -5,7 +5,7 @@
 ## are pure unit tests that exercise the error-guard paths without running
 ## an agent loop or mock server.
 
-import std/[json, unittest, strutils, os, times]
+import std/[json, unittest, strutils, os, times, tables]
 
 import talos_core/config
 import talos_core/delegate
@@ -217,6 +217,48 @@ suite "delegate: child inherits delegate tool only when the persona allows it":
   test "no LLM configured blocks delegation regardless of the persona flag":
     let persona = PersonaConfig(name: "supervisor", delegateEnabled: true)
     check not childGetsDelegateTool(persona, llmConfigured = false)
+
+suite "delegate: child LLM routing via persona model_role (task-13)":
+  ## resolveChildLlm is the exact decision point the delegate execute proc
+  ## consults to pick which LLMClient a spawned child runs on.
+  let parentLlm = LLMClient(baseUrl: "http://parent:9000/v1", model: "parent-model")
+
+  test "persona with no model_role reuses the parent's client unchanged":
+    let persona = PersonaConfig(name: "plain")
+    let cfg = defaultConfig()
+    let childLlm = resolveChildLlm(cfg, persona, parentLlm)
+    check childLlm.baseUrl == parentLlm.baseUrl
+    check childLlm.model == parentLlm.model
+
+  test "persona with model_role = \"default\" also reuses the parent's client unchanged":
+    let persona = PersonaConfig(name: "explicit_default", modelRole: "default")
+    let cfg = defaultConfig()
+    let childLlm = resolveChildLlm(cfg, persona, parentLlm)
+    check childLlm.baseUrl == parentLlm.baseUrl
+    check childLlm.model == parentLlm.model
+
+  test "persona with an explicit non-default model_role gets its own client for that role":
+    let persona = PersonaConfig(name: "explorer", modelRole: "smol")
+    var cfg = defaultConfig()
+    cfg.provider = "openrouter"
+    cfg.openrouterEndpoint = "http://cheap-endpoint:9001/v1"
+    cfg.openrouterApiKey = "cheap-key"
+    cfg.roles["smol"] = ModelRoleConfig(
+      provider: "openrouter", model: "openrouter/auto:cheap", fallback: @[])
+    let childLlm = resolveChildLlm(cfg, persona, parentLlm)
+    check childLlm.model == "openrouter/auto:cheap"
+    check childLlm.baseUrl == "http://cheap-endpoint:9001/v1"
+    check childLlm.baseUrl != parentLlm.baseUrl
+
+  test "an unconfigured non-default model_role falls back to the legacy single-model fields, not the parent client":
+    let persona = PersonaConfig(name: "explorer", modelRole: "smol")
+    var cfg = defaultConfig()
+    cfg.provider = "openrouter"
+    cfg.openrouterEndpoint = "http://legacy-endpoint:9002/v1"
+    cfg.openrouterModel = "legacy-model"
+    let childLlm = resolveChildLlm(cfg, persona, parentLlm)
+    check childLlm.model == "legacy-model"
+    check childLlm.baseUrl == "http://legacy-endpoint:9002/v1"
 
 for suffix in ["", "-wal", "-shm", "-journal"]:
   let p = testDbPath & suffix

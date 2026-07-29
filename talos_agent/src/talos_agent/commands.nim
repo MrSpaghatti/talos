@@ -241,7 +241,12 @@ proc cmdAsk*(
     # --- Plan-Execute mode ---
     var planRes: PlanResult
     try:
-      let executionPlan = generatePlan(llm, userInput, reg)
+      # Plan generation routes through the "plan" role (task-13) when
+      # configured — e.g. a stronger/pricier model for decomposition than
+      # the "default" role used for step execution below. Falls back to
+      # the same model as `llm` when no [roles.plan] section is configured.
+      let planLlm = buildLLMClient(cfg, "plan")
+      let executionPlan = generatePlan(planLlm, userInput, reg)
       stdout.writeLine(formatPlan(executionPlan))
       stdout.flushFile()
       var agentCfg = newAgentConfig(cfg, systemPrompt = TalosSystemPrompt)

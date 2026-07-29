@@ -56,6 +56,24 @@ proc childGetsDelegateTool*(persona: PersonaConfig; llmConfigured: bool): bool =
   ## without needing a live delegation round-trip.
   persona.delegateEnabled and llmConfigured
 
+proc resolveChildLlm*(
+    parentCfg: TalosConfig;
+    persona: PersonaConfig;
+    parentLlm: LLMClient;
+): LLMClient =
+  ## Picks the LLMClient a delegated child agent should run on (task-13).
+  ## A persona with an explicit `model_role` (other than "default", which
+  ## is a no-op spelling of the same thing) gets its own client built for
+  ## that role; otherwise the child reuses `parentLlm` unchanged, so
+  ## personas that don't opt in see zero behavior change from before
+  ## role-based routing existed. Pulled out as a pure function so the
+  ## routing decision itself is directly testable without needing a live
+  ## delegation round-trip.
+  if persona.modelRole.len > 0 and persona.modelRole != "default":
+    buildLLMClient(parentCfg, persona.modelRole)
+  else:
+    parentLlm
+
 proc makeDelegateExecuteProc*(): auto =
   ## Returns a gcsafe closure that captures the current AgentGlobals ref.
   ## The ref object is GC-safe to capture, and the closure accesses globals
@@ -178,9 +196,11 @@ proc makeDelegateExecuteProc*(): auto =
       discard registerMcpServers(childReg, parentCfg.mcpServers)
     let scopedChildReg = scopedRegistry(childReg, persona)
 
+    let childLlm = resolveChildLlm(parentCfg, persona, captured.llmClient)
+
     let childResult = runAgentLoop(
       agentCfg = childCfg,
-      llm = captured.llmClient,
+      llm = childLlm,
       registry = scopedChildReg,
       memory = childMem,
       userInput = task,
