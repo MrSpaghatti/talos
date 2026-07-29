@@ -2,6 +2,7 @@
 
 import std/[os, strutils, asyncdispatch, options]
 import db_connector/db_sqlite
+import talos_core/advisor
 import talos_core/agent_dispatcher
 import talos_core/build_llm_client
 import talos_core/config
@@ -162,6 +163,12 @@ proc cmdDaemon*(
   reg.register(recallTool(memOpts))
   reg.register(reflectTool(memOpts))
 
+  # Personas are loaded unconditionally (delegation and the advisor role
+  # both read from the same personas.toml, and loadPersonasSafe is a
+  # cheap no-op when the file doesn't exist).
+  let personasPath = defaultPersonasPath()
+  let pReg = loadPersonasSafe(personasPath)
+
   # Delegate + MCP tools — opt-in via daemonDelegation config flag.
   var mcpSseHandles: seq[McpServerHandle] = @[]
   if discordCfg.daemonDelegation:
@@ -169,8 +176,6 @@ proc cmdDaemon*(
     setGlobalLLMClient(llm)
     setTalosConfig(cfg)
     setToolAcl(toToolAcl(discordCfg))
-    let personasPath = defaultPersonasPath()
-    let pReg = loadPersonasSafe(personasPath)
     setPersonaRegistry(pReg)
     setDelegationConfig(defaultDelegationConfig())
 
@@ -182,6 +187,20 @@ proc cmdDaemon*(
       # shutdown `finally` below.
       let mcpResult = registerMcpServersWithHandles(reg, cfg.mcpServers)
       mcpSseHandles = mcpResult.sseHandles
+
+  # Advisor role (task-16) — opt-in via a persona literally named
+  # "advisor" in personas.toml, same zero-new-config-surface convention
+  # task-17 uses for its default-routing persona. Independent of
+  # daemonDelegation: the advisor watches, it doesn't delegate.
+  let advisorEnabled = pReg.hasPersona(DefaultAdvisorPersonaName)
+  let advisorPersona =
+    if advisorEnabled: pReg.getPersona(DefaultAdvisorPersonaName)
+    else: PersonaConfig()
+  let advisorLlm =
+    if advisorEnabled: resolveChildLlm(cfg, advisorPersona, llm)
+    else: llm
+  if advisorEnabled:
+    ring.log("advisor role enabled (persona: advisor)")
 
   # Open thread-mapping DB with WAL mode and busy timeout
   # to avoid SQLITE_BUSY when the memory module writes concurrently.
@@ -225,7 +244,8 @@ proc cmdDaemon*(
         discard
   let dispatcher = newAgentDispatcher(
     callbackProc, cfg, llm, reg, resolveDbPath(cfg), turnCallback = turnCallback,
-    requestSetup = resetDelegationBudget, systemPrompt = TalosSystemPrompt
+    requestSetup = resetDelegationBudget, systemPrompt = TalosSystemPrompt,
+    advisorPersona = advisorPersona, advisorLlm = advisorLlm, advisorEnabled = advisorEnabled,
   )
 
   # Create the DI-based DiscordBot with real API callbacks
