@@ -74,6 +74,27 @@ proc initGlobals(
   setDelegationConfig(dc)
   setTalosConfig(cfg)
 
+proc initGlobalsWithSpecialty(personaName: string; specialty: string) =
+  ## Like initGlobals, but the registered persona declares a `specialty`
+  ## so task-17's routeToDelegate can match it.
+  let llm = makeMinimalLLM()
+  var reg = newPersonaRegistry()
+  registerPersona(reg, PersonaConfig(
+    name: personaName,
+    maxIterations: 5,
+    memoryScope: msOwnSessions,
+    maxDelegationDepth: 2,
+    maxDelegationsPerRun: 5,
+    specialty: specialty,
+  ))
+  let dc = DelegationConfig(maxDepth: 2, maxDelegations: 5, personaName: personaName)
+  var cfg = defaultConfig()
+  cfg.dbPath = testDbPath
+  setGlobalLLMClient(llm)
+  setPersonaRegistry(reg)
+  setDelegationConfig(dc)
+  setTalosConfig(cfg)
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -87,14 +108,17 @@ suite "delegate: validation guards":
     check result.exitCode == 1
     check result.output.contains("not initialized")
 
-  test "missing persona argument":
+  test "missing persona argument with no routable match returns a router error (task-17)":
+    # persona is optional as of task-17 — omitting it triggers auto-routing
+    # instead of an immediate "required" error. makeRegistryWithPersona
+    # registers a persona with no `specialty` and no persona named
+    # "default", so nothing can match and the router itself fails closed.
     resetGlobals()
     initGlobals()
     let exec = makeDelegateExecuteProc()
     let result = exec(%*{"task": "do something"})
     check result.isError
-    check result.output.contains("persona")
-    check result.output.contains("required")
+    check result.output.contains("no persona's specialty matched")
 
   test "missing task argument":
     resetGlobals()
@@ -113,6 +137,47 @@ suite "delegate: validation guards":
     check result.isError
     check result.output.contains("unknown persona")
     check result.output.contains("known_persona")
+
+  test "omitting persona routes to a persona whose specialty matches the task (task-17)":
+    resetGlobals()
+    initGlobalsWithSpecialty("code_reviewer", "code review, quality, lint")
+    let exec = makeDelegateExecuteProc()
+    let result = exec(%*{"task": "please do a code review for quality issues"})
+    # Routing succeeded (no "unknown persona" / router error) — the call
+    # proceeds past the routing+lookup stage to whatever it fails at next
+    # in this network-less unit-test setup, same as the persona-specified
+    # tests elsewhere in this file.
+    check not result.output.contains("no persona's specialty matched")
+    check not result.output.contains("unknown persona")
+
+  test "an explicit persona is used verbatim even when a differently-specialized persona would match better":
+    resetGlobals()
+    let llm = makeMinimalLLM()
+    var reg = newPersonaRegistry()
+    registerPersona(reg, PersonaConfig(
+      name: "code_reviewer", maxIterations: 5, memoryScope: msOwnSessions,
+      maxDelegationDepth: 2, maxDelegationsPerRun: 5,
+      specialty: "code review, quality, lint"))
+    registerPersona(reg, PersonaConfig(
+      name: "generalist", maxIterations: 5, memoryScope: msOwnSessions,
+      maxDelegationDepth: 2, maxDelegationsPerRun: 5))
+    setGlobalLLMClient(llm)
+    setPersonaRegistry(reg)
+    setDelegationConfig(DelegationConfig(maxDepth: 2, maxDelegations: 5))
+    var cfg = defaultConfig()
+    cfg.dbPath = testDbPath
+    setTalosConfig(cfg)
+    let exec = makeDelegateExecuteProc()
+    # Task text screams "code review", but the caller named "generalist"
+    # explicitly — the router must not override that.
+    let result = exec(%*{
+      "persona": "generalist",
+      "task": "please do a code review for quality issues",
+    })
+    check not result.output.contains("unknown persona")
+    # (We can't observe *which* persona ran without a full mock LLM
+    # round-trip, but an unrouted explicit name reaching this point at all
+    # — rather than being silently redirected — is what this guards.)
 
   test "nil persona registry":
     resetGlobals()

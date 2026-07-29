@@ -35,13 +35,14 @@ proc makeDelegateParams*(): JsonNode =
   p["properties"]["persona"] = newJObject()
   p["properties"]["persona"]["type"] = %"string"
   p["properties"]["persona"]["description"] =
-    %"Name of the persona to spawn (e.g. 'code_reviewer')"
+    %("Name of the persona to spawn (e.g. 'code_reviewer'). Optional — " &
+      "if omitted, the persona is chosen automatically based on the " &
+      "task description (task-17 routing).")
   p["properties"]["task"] = newJObject()
   p["properties"]["task"]["type"] = %"string"
   p["properties"]["task"]["description"] =
     %"The subtask description for the child agent"
   p["required"] = newJArray()
-  p["required"].add(%"persona")
   p["required"].add(%"task")
   p
 
@@ -100,14 +101,8 @@ proc makeDelegateExecuteProc*(): auto =
         isError: true,
         exitCode: 1,
       )
-    let personaName = args{"persona"}.getStr("")
+    let explicitPersona = args{"persona"}.getStr("")
     let task = args{"task"}.getStr("")
-    if personaName.len == 0:
-      return ToolResult(
-        output: "delegate: 'persona' argument is required",
-        isError: true,
-        exitCode: 1,
-      )
     if task.len == 0:
       return ToolResult(
         output: "delegate: 'task' argument is required",
@@ -120,6 +115,17 @@ proc makeDelegateExecuteProc*(): auto =
         isError: true,
         exitCode: 1,
       )
+    # task-17: an explicit persona always wins; otherwise route based on
+    # the task description against each registered persona's specialty.
+    let personaName =
+      try:
+        routeToDelegate(captured.personaRegistry, task, explicitPersona = explicitPersona)
+      except PersonaError as e:
+        return ToolResult(
+          output: "delegate: " & e.msg,
+          isError: true,
+          exitCode: 1,
+        )
     if not captured.personaRegistry.hasPersona(personaName):
       return ToolResult(
         output: "delegate: unknown persona '" & personaName &
