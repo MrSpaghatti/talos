@@ -87,6 +87,7 @@ when isMainModule:
     }],
     [cmdSearch,  cmdName = "search",  help = {
       "limit":       "max matches to show",
+      "semantic":    "also search retained facts semantically and merge results",
       "config":      "path to TOML config (overrides default)",
       "envFile":     "path to .env file (default: .env)",
     }],

@@ -25,6 +25,7 @@ import talos_core/tool_registry
 import tools/shell
 import tools/browser
 import tools/email
+import tools/memory_tools
 import talos_agent/email_config
 import talos_agent/cli
 import talos_agent/config
@@ -120,6 +121,10 @@ proc cmdDaemon*(
   # Build LLM client
   let llm = buildLLMClient(cfg)
 
+  # Open memory store (before tool registration — retain/recall/reflect
+  # need a live handle to build their MemoryToolOptions).
+  var mem = openMemory(cfg)
+
   # Build tool registry
   var reg = newToolRegistry()
 
@@ -149,6 +154,14 @@ proc cmdDaemon*(
   # TALOS_EMAIL_SMTP_PASSWORD) is actually set up.
   reg.register(emailTool(toEmailOptions(loadEmailConfig()), toToolAcl(discordCfg)))
 
+  # retain/recall/reflect — retain writes durable memory (riskMedium, same
+  # gating shape as file_write/shell/browser/email); recall/reflect are
+  # read-only and always ungated, matching file_read's precedent.
+  let memOpts = newMemoryToolOptions(mem, buildEmbeddingClient(cfg), llm)
+  reg.register(retainTool(memOpts, toToolAcl(discordCfg)))
+  reg.register(recallTool(memOpts))
+  reg.register(reflectTool(memOpts))
+
   # Delegate + MCP tools — opt-in via daemonDelegation config flag.
   if discordCfg.daemonDelegation:
     # Set agent globals so the delegate tool can initialise.
@@ -163,9 +176,6 @@ proc cmdDaemon*(
     reg.register(makeDelegateTool())
     if cfg.mcpServers.len > 0:
       discard registerMcpServers(reg, cfg.mcpServers)
-
-  # Open memory store
-  var mem = openMemory(cfg)
 
   # Open thread-mapping DB with WAL mode and busy timeout
   # to avoid SQLITE_BUSY when the memory module writes concurrently.

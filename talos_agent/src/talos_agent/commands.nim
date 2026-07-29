@@ -384,10 +384,13 @@ proc cmdSessions*(
 proc cmdSearch*(
     query: seq[string];
     limit = 20;
+    semantic = false;
     config = "";
     envFile = ".env";
 ): int =
-  ## Search across stored message content.
+  ## Search across stored message content. With --semantic, also pulls in
+  ## semantically-related retained facts (see the retain/recall/reflect
+  ## tools) and merges both into one ranked list via searchHybrid.
   if query.len == 0:
     printError("search requires a query")
     return 2
@@ -402,6 +405,17 @@ proc cmdSearch*(
   var mem = openMemory(cfg)
   defer: mem.close()
   let q = query.join(" ")
+
+  if semantic:
+    let hits = mem.searchHybrid(q, buildEmbeddingClient(cfg), topK = limit)
+    if hits.len == 0:
+      printSystemNote("no matches")
+      return 0
+    for h in hits:
+      echo fmt"[{h.kind}] [{h.sessionId}] {h.createdAt}"
+      echo "  " & h.content
+    return 0
+
   let hits = mem.searchHistory(q)
   if hits.len == 0:
     printSystemNote("no matches")

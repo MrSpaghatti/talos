@@ -6,6 +6,7 @@
 
 import std/[json, os, strutils]
 import talos_core/agent_loop
+import talos_core/build_llm_client
 import talos_core/config
 import talos_core/delegate
 import talos_core/llm_client
@@ -16,6 +17,7 @@ import talos_core/tool_registry
 import tools/shell
 import tools/browser
 import tools/email
+import tools/memory_tools
 import talos_agent/email_config
 import talos_agent/state
 
@@ -237,6 +239,17 @@ proc buildRegistry*(cfg: TalosConfig = defaultConfig()): ToolRegistry =
   result.register(shellTool())
   result.register(browserTool())
   result.register(emailTool(toEmailOptions(loadEmailConfig())))
+  try:
+    let mem = openMemory(cfg)
+    let memOpts = newMemoryToolOptions(
+      mem, buildEmbeddingClient(cfg), buildLLMClient(cfg))
+    result.register(retainTool(memOpts))
+    result.register(recallTool(memOpts))
+    result.register(reflectTool(memOpts))
+  except CatchableError:
+    # No durable memory available (e.g. unwritable db path) — skip these
+    # tools rather than fail startup; shell/browser/email etc. still work.
+    discard
   if cfg.mcpServers.len > 0:
     discard registerMcpServers(result, cfg.mcpServers)
   # Register delegate tool — only if globals are set

@@ -5,7 +5,7 @@ license       = "MIT"
 srcDir        = "src"
 bin           = @["talos_agent"]
 requires "nim >= 2.0.0"
-requires "https://github.com/mrspaghatti/talos_core#v1.5.0"
+requires "https://github.com/mrspaghatti/talos_core#v1.7.0"
 requires "db_connector >= 0.1.0"
 requires "illwill >= 0.4.0"
 requires "dimscord >= 1.0.0"
@@ -37,3 +37,4 @@ task test, "Run all tests":
   exec "nim c --path:src -r tests/test_browser_tool.nim"
   exec "nim c --path:src -r tests/test_email_config.nim"
   exec "nim c --path:src -r tests/test_email_tool.nim"
+  exec "nim c --path:src --threads:on -r tests/test_memory_tools.nim"

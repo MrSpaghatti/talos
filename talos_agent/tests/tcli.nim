@@ -292,6 +292,26 @@ suite "cli: cmdSessions and cmdSearch on a fresh db":
     check sid in output
     check "quick" in output
 
+  test "search --semantic still returns the FTS hit when the embeddings backend is unreachable":
+    let path = tempDbPath()
+    defer: teardownDb(path)
+    let sid = seedSession(path, "the quick brown fox")
+    putEnv("TALOS_DB_PATH", path)
+    putEnv("OPENROUTER_API_KEY", "dummy")
+    # Port 1 refuses connections immediately (nothing listens there) rather
+    # than hanging on DNS resolution — keeps this test fast while still
+    # exercising searchHybrid's graceful fallback-to-FTS-only path.
+    putEnv("TALOS_EMBEDDING_ENDPOINT", "http://127.0.0.1:1")
+    defer:
+      delEnv("TALOS_DB_PATH")
+      delEnv("OPENROUTER_API_KEY")
+      delEnv("TALOS_EMBEDDING_ENDPOINT")
+    let (rc, output) = captureStdout(
+      proc(): int = cmdSearch(query = @["quick"], semantic = true, envFile = "/dev/null"))
+    check rc == 0
+    check sid in output
+    check "[message]" in output
+
 suite "cli: ask and session error handling without a live LLM":
   test "ask requires a question":
     putEnv("OPENROUTER_API_KEY", "dummy")
