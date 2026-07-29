@@ -1,235 +1,161 @@
-# Talos Agent — Development Status
+# Talos — Development Status
 
-**Last Updated**: July 24, 2026
-**Project Path**: `/home/spag/talos`
-**Phase**: Phase 1+2 complete. Tasks 1, 2, 3, 4, 6, & 8 (of 8) done; Task 5 (Vector Memory) and Task 7 (MCP Streaming) remaining. Onboarding fixes + deep-dive audits complete (2026-07-22, 2026-07-24).
+**Last updated**: 2026-07-29
+**Verification method**: every claim below was checked directly in this
+session — full test suites re-run to completion (not recalled from a
+previous run), daemon state checked via `systemctl`, CI state checked via
+`gh run list`, feature claims checked by grepping the actual source rather
+than trusting task specs or prior status docs. A previous status pass on
+this project claimed "100% done" in places that weren't — the intent here
+is to not repeat that.
 
 ---
 
 ## Summary
 
-All planned waves are implemented and verified. Talos is a fully functional
-AI agent with:
+Talos is now three separate packages: **`talos_core`** (a standalone,
+Discord-agnostic foundation library, its own git repo), **`talos_agent`**
+(the general ambient assistant — CLI, TUI, web UI, Discord daemon), and
+**`talos_code`** (a separate coding-harness agent, out of scope for feature
+work). `talos_agent` and `talos_code` still live together in one repo
+(`github.com/mrspaghatti/talos`); `talos_core` was extracted to
+`github.com/mrspaghatti/talos_core` and is consumed as a pinned git
+dependency.
 
-- **CLI agent** (`chat`, `ask`, `session`, `history`, `search`)
-- **Discord daemon** (DI-based bot with permissions, threads, file tools)
-- **Persistent memory** (SQLite + FTS5 full-text search)
-- **ReAct loop** with loop detection, error recovery, and configurable limits
-- **Streaming responses** (SSE) — token-by-token CLI output via `chatCompletionStream`;
-  Discord progressive edits deferred (requires threading)
-- **Web UI** — single-page chat interface served via `talos_agent web`,
-  with session browsing, full-text search, and chat via REST API
-- **Tool system** with sandboxed shell, file read/write, permission checks,
-  MCP client bridge, and persona-scoped agent delegation
----
+The Discord daemon is **live** — running under systemd, connected, and has
+already crash-reported and recovered at least once in the wild. This is the
+first time in the project's history it's actually been deployed rather than
+just built.
 
-## Completed
+## Verified test state (this session)
 
-### Phase 1 Wave 1: Foundation (100%)
-| Task | Module | Tests |
-|------|--------|-------|
-| 1.1 Config (TOML + .env + env vars) | `config.nim` | 35/35 pass |
-| 1.2 LLM client (OpenAI Chat Completions) | `llm_client.nim` | 16/16 pass |
-| 1.3 Token counter (heuristic) | `token_counter.nim` | 14/14 pass |
-| 1.4 SQLite memory + FTS5 | `memory.nim` | 27/27 pass |
+| Package | Test files | Checks | Result |
+|---|---|---|---|
+| `talos_core` | 22 | 489 | ✅ 0 failed |
+| `talos_agent` | 23 | 271 | ✅ 0 failed |
+| `talos_code` | 1 | 32 | ✅ 0 failed |
+| **Total** | **46** | **792** | **✅ 0 failed** |
 
-### Phase 1 Wave 2: Agent Core (100%)
-| Task | Module | Tests |
-|------|--------|-------|
-| 2.1 Tool registry + shell tool | `tool_registry.nim`, `tools/shell.nim` | 20/20 pass |
-| 2.2 ReAct agent loop | `agent_loop.nim` | 10/10 pass |
-| 2.3 Mock HTTP server | `mock_server.nim` | 3/3 pass |
+Each suite was run to completion via `nimble test -y` with full,
+untruncated output inspected for `[FAILED]` — not inferred from exit code
+alone.
 
-### Phase 1 Wave 3: CLI + Integration (100%)
-| Task | Module | Tests |
-|------|--------|-------|
-| 3.1 CLI interface (cligen) | `talos_agent.nim` | 19/19 pass |
-| 3.2 Integration wiring | `talos_agent.nim` | 17/17 pass (integration tests) |
-| 3.3 End-to-end tests + docs | `tagent_loop`, `tcli`, `tintegration` | All pass |
-| Agent shell tool | `test_shell_tool.nim` | 18/18 pass |
+## CI / repo state — ⚠️ not currently clean
 
-### Phase 2 Discord Integration (100%)
-| Module | Responsibility | Key Features |
-|--------|----------------|--------------|
-| `discord.nim` | DI-based bot object | Callback injection, shard, agent dispatcher wiring |
-| `discord_commands.nim` | Command handler | `!status`, `!config`, `!admin`, `!session` — with permission checks |
-| `discord_bridge.nim` | Real Discord API adapter | `sendMessage`, `triggerTyping`, `createThread`, `archiveThread` |
-| `discord_types.nim` | Shared types | `DiscordConfig`, `DiscordUser`, `FileRules` |
-| `discord_mocks.nim` | Mock implementations | `MockDiscordApi`, `MockShard` for offline testing |
-| `permission.nim` | Permission evaluator | User allow/deny lists, tool risk levels, path-based file rules |
-| `file_path_validator.nim` | Path safety | Path traversal guards, deny-list, percent-decode |
-| `file_tool.nim` | File read/write tools | Pattern-based allow/deny paths |
-| `message_chunker.nim` | Discord message chunking | Splits long messages at 2000-char Discord limit |
-| `rate_limit.nim` | Rate limiter | Per-user token-bucket rate limiting |
-| `thread_mapping.nim` | Thread persistence | Maps Discord channel+user to persistent agent threads |
-| `agent_dispatcher.nim` | Async agent runner | Queues agent requests with callback for result delivery |
+- `talos_agent`/`talos_code`'s local `main` is **7 commits ahead of
+  `origin/main`**, unpushed (everything from "Task 5 vector memory" through
+  the Phase 7 backlog).
+- GitHub Actions on `origin/main` is currently **red**: the last 3 pushed
+  runs all failed, most recently a `shell.nim` type mismatch
+  (`canUseTool(callerId, "shell", acl)` resolving against the old
+  `DiscordConfig`-typed overload instead of `ToolAcl`). That specific bug
+  does not reproduce locally at current `HEAD` — the local suite's
+  gated-shell tests pass — so it looks fixed but unpushed, not actively
+  broken. Nobody has reconciled this with GitHub yet.
+- `talos_core` (the new standalone repo) has **no CI workflow at all** —
+  it's only ever exercised transitively, via `talos_agent`/`talos_code`
+  pulling it as a dependency.
 
-### Quality / Infrastructure (100%)
-| Item | Status |
-|------|--------|
-| `make build` (core + agent + code) | ✅ Compiles (see SSL note below) |
-| `make test` (core + agent + code) | ✅ All 557 tests pass, 0 FAILED |
-| `nim check` (core + agent) | ✅ No static analysis errors |
-| `.env` / `.env.example` | ✅ Configured |
-| `.gitignore` | ✅ Covers all build artifacts |
-| Architectural review | ✅ `AUDIT_REPORT.md` written |
-| Hardening pass (2026-07-19) | ⚠️ Found & fixed 7 real bugs incl. 2 sandbox-escape issues and a broken compile path — see CHANGELOG `[Unreleased]` |
-| CI pipeline (GitHub Actions) | ✅ Passing on Nim 2.0.8 and 2.2.2 |
+## Live deployment
 
----
-
-## Known Issues (Discovered during Code Audit)
-
-### ~~🔴 SSL build failure with dimscord on Nim 2.2.10~~ ✅ Fixed
-
-> **Fixed**: `config.nims` in both packages now pass `--define:ssl`, which
-> ensures `defineSsl` is consistently true across all modules, resolving the
-> `raiseSSLError` lookup. Both `make build` and `make test` work on Nim 2.2.10.
-
-### 🟡 LLM client test slow exit
-
-`tllm_client.nim` starts a mock TCP server in a thread that doesn't join
-cleanly on process exit. The test passes but hangs for ~2 seconds at
-shutdown. Run individual tests with `nim c -r` to avoid the batch issue.
+- systemd user unit `talos-daemon.service`: **enabled**, `Restart=always`,
+  `linger` on — survives logout and crashes.
+- Confirmed running and connected this session (`systemctl --user status`):
+  bot "Raven" online, PID live, clean startup log.
+- `~/.config/talos/discord.toml` exists and is loaded.
+- `~/.local/share/talos/crash_reports/latest.log` exists with a real entry
+  from 2026-07-27 — the crash-report path has actually fired once in
+  production, not just in tests.
+- Not independently re-verified this session: `!status`/`!config`/`!admin`/
+  `!session` command behavior against a live non-admin account, or a
+  forced-crash DM-to-admin round trip. Both were verified once during Phase
+  3's initial standup; not repeated here.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    talos_agent (CLI)                    │
-│  ┌──────────┐  ┌──────────────┐  ┌──────────────────┐   │
-│  │ cligen   │  │ talos_core │  │ tools/shell.nim  │   │
-│  │ dispatch │──▶│ agent_loop   │──▶ (sandboxed shell)│   │
-│  └──────────┘  │ (ReAct loop) │  └──────────────────┘   │
-│                └──────┬───────┘                           │
-│                       │                                   │
-│  ┌─────────────────────┐   ┌─────────────────────────┐   │
-│  │ talos_core/       │   │ talos_core/           │   │
-│  │ llm_client.nim      │   │ memory.nim (SQLite+FTS5)│   │
-│  │ config.nim          │   │ tool_registry.nim       │   │
-│  └─────────────────────┘   └─────────────────────────┘   │
-├──────────────────────────────────────────────────────────┤
-│                 talos_agent (Daemon)                    │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │ dimscord ─▶ discord_bridge ─▶ discord.nim         │   │
-│  │                                        │          │   │
-│  │                    ┌─────────────────────┘          │   │
-│  │                    ▼                                 │   │
-│  │              discord_commands.nim                    │   │
-│  │                    │                                 │   │
-│  │                    ▼                                 │   │
-│  │  agent_dispatcher.nim ─▶ talos_core/agent_loop    │   │
-│  └──────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────┘
+github.com/mrspaghatti/talos_core (standalone repo, pinned by version tag)
+  config, llm_client (+ role-based routing/fallback chains), token_counter,
+  memory (SQLite + FTS5 + brute-force cosine vector recall), embeddings,
+  tool_registry, agent_loop, agent_dispatcher, plan_executor, persona
+  (+ delegation routing + advisor), mcp_client/mcp_tool (SSE + streamable
+  HTTP), heartbeat, crash_report, code_summary, acl/permission/
+  file_path_validator/file_tool, message_chunker, posix_io, util,
+  testkit/ (shared mock servers for downstream test suites)
+
+github.com/mrspaghatti/talos (monorepo)
+  talos_agent/   CLI (cli.nim, commands.nim), TUI (tui/chat_tui.nim +
+                 overlay/input_bar/theme/transcript/streaming), web_server,
+                 Discord stack (discord/ — bot, bridge, commands, config,
+                 thread_mapping, mocks), session_alias (cross-surface
+                 continuity), voice (persona/system-prompt pass),
+                 delegate_tool, email_config, tools/ (shell, browser, email,
+                 memory_tools[retain/recall/reflect])
+  talos_code/    talos_code.nim, code_runner, code_tool, compile
+                 — untouched by this plan except "don't break it"
 ```
 
 ---
 
-## Files by Layer
+## Feature status, verified against source
 
-### talos_core (19 modules)
-| File | Role |
-|------|------|
-| `config.nim` | Layered config (TOML + .env + env vars) |
-| `llm_client.nim` | OpenAI-compatible HTTP client |
-| `token_counter.nim` | Heuristic token estimation |
-| `memory.nim` | SQLite + FTS5 persistence |
-| `tool_registry.nim` | Named tool registration + JSON schema export |
-| `agent_loop.nim` | ReAct loop: LLM → tool → loop |
-| `build_llm_client.nim` | TalosConfig → LLMClient builder |
-| `discord.nim` | DI-based Discord bot |
-| `discord_bridge.nim` | Real Discord API adapter (Dimscord) |
-| `discord_commands.nim` | Bot command handlers |
-| `discord_types.nim` | Shared Discord types |
-| `discord_mocks.nim` | Mock API for offline testing |
-| `agent_dispatcher.nim` | Async agent request queue → agent_loop |
-| `permission.nim` | User/tool permission evaluation |
-| `file_path_validator.nim` | Path traversal protection |
-| `file_tool.nim` | File read/write agent tools |
-| `message_chunker.nim` | Discord message size splitting |
-| `rate_limit.nim` | Per-user token bucket rate limiter |
-| `thread_mapping.nim` | Discord→agent thread persistence |
+### Done and confirmed working
 
-### talos_agent (3 modules)
-| File | Role |
-|------|------|
-| `talos_agent.nim` | CLI entry point + subcommand dispatch |
-| `tools/shell.nim` | Sandboxed shell tool with deny-list, timeout |
-| `tools/` | Tool implementations directory |
+| Feature | Where | Notes |
+|---|---|---|
+| Core/Discord decoupling | `talos_core` has zero `DiscordConfig`/`dimscord` references | `ToolAcl` replaces `DiscordConfig` in `permission.nim`/`file_tool.nim` |
+| `talos_core` as standalone repo | `github.com/mrspaghatti/talos_core`, tags v1.0.0–v1.13.0 | consumed via pinned `requires` in both consumer `.nimble` files |
+| Discord daemon, live | systemd unit, confirmed running | see Live Deployment above |
+| Crash reporting | `crash_report.nim` (`RingLogger` + `writeCrashReport`) | has a real captured crash on disk |
+| Proactive heartbeat | `heartbeat.nim`, wired into daemon | interval-tick scheduler; check logic still minimal by design |
+| Personality/voice pass | `voice.nim` | system-prompt/persona rework, not generic-assistant tone |
+| Cross-surface continuity | `session_alias.nim` | CLI/TUI/Discord can share session identity |
+| TUI flare | `tui/theme.nim`, `tui/transcript.nim` | role labels, tool-call coloring, spacing |
+| `/btw` ephemeral question | `chat_tui.nim: runBtwTurn`/`handleSlashCommand` | **TUI only** — not in Discord, not in `ask`/non-TUI `chat` |
+| Email tool | `tools/email.nim` | SMTP send + IMAP read/search, riskHigh-gated |
+| Browser tool | `tools/browser.nim` | headless Chrome via CDP, riskHigh-gated |
+| Vector memory (Task 5) | `memory.nim` + `embeddings.nim`, `retain`/`recall`/`reflect` tools | brute-force cosine, hybrid FTS5+semantic search (`--semantic` CLI flag) |
+| MCP streaming (Task 7) | `mcp_client.nim`/`mcp_tool.nim` | SSE + streamable-HTTP transport, `tool_list_changed` reconciliation, tested against a real reference MCP server |
+| Role-based model routing (task-13) | `build_llm_client.nim` | `[roles.*]` config, per-role fallback chains |
+| Subagent dispatch routing (task-17) | `persona.nim: routeToDelegate` | keyword-overlap auto-routing, explicit persona still wins |
+| Advisor role (task-16) | `advisor.nim`, wired in `agent_dispatcher.nim` | reviews transcript post-turn, injects a note into the next turn only, never persisted |
+| Summarized reads (task-18) | `code_summary.nim`, `file_tool.nim` | structural summary above a line threshold; `full=true` bypasses it; `talos_code`'s own read tool deliberately untouched |
 
-### talos_code (5 modules)
-| File | Role |
-|------|------|
-| `talos_code.nim` | CLI binary entry point |
-| `code_runner.nim` | CompileResult, parseNimErrors, CodingHarnessConfig |
-| `code_tool.nim` | compile/test/read_file/write_file tools |
-| `compile.nim` | Subprocess compile execution with timeout |
-| `config.nims` | Nimble compiler switches (-d:ssl, path resolution) |
+### Real but partial
 
----
+| Feature | Gap |
+|---|---|
+| Slash commands (task-09) | Works in the TUI (`/help /new /session /model /info /btw /quit`) via an inline `handleSlashCommand` in `chat_tui.nim` — but the dedicated `slash_commands.nim` module the original spec called for was never split out, and none of this exists outside the TUI. |
+| URI-scheme tool addressing | Recommended as part of Task 7's design (`read://`/`search://`/`write://`-style prefix dispatch unifying MCP and local tools) — the core SSE streaming work landed, this specific unification did not. |
 
-## Test Coverage
+### Not done
 
-| Package | Test files | Tests | Status |
-|---------|-----------|-------|--------|
-| talos_core (Wave 1) | tconfig, tllm_client, ttoken_counter, tmemory | 134 | ✅ All pass |
-| talos_core (Wave 2) | ttool_registry, test_mock_server | 22 | ✅ All pass |
-| talos_core (Discord) | test_permission, test_file_*, test_rate_limit, test_thread_*, test_daemon_delegation, test_message_chunker, test_discord_*, test_e2e_discord | 153 | ✅ All pass |
-| talos_core (MCP) | test_mcp_client, test_mcp_tool | 46 | ✅ All pass |
-| talos_core (Persona) | test_persona | 22 | ✅ All pass |
-| talos_core (Plan-Execute) | test_plan_executor | 35 | ✅ All pass |
-| talos_agent | tcli, tagent_loop, tintegration, tdelegate_tool, tweb_server, test_shell_tool, tbench, ttui_streaming | 113 | ✅ All pass |
-| talos_code | tcode_runner | 32 | ✅ All pass |
-| **Total** | **31 test files** | **557** | **✅ 0 FAILED** |
+| Item | Status |
+|---|---|
+| Bang commands, `!<cmd>` shell interception in CLI/TUI (task-10) | No interceptor found in `commands.nim`/`cli.nim`. (Discord's separate `!status`/`!config`/`!admin`/`!session` prefix commands are unrelated and *are* implemented.) |
+| Preview-then-accept edit workflow (task-12) | Deliberately deferred — `talos_code`-specific, out of scope for this plan. |
+| Checkpoints / context pruning (task-14) | **Not implemented** — no checkpoint/rewind concept anywhere in `memory.nim`, `agent_loop.nim`, or the CLI. This was previously tracked as done alongside `/btw`; that was incorrect — only `/btw` shipped. |
+| Session branching, `/tree` (task-15) | Deliberately deferred — no concrete need yet. |
 
 ---
 
-## Next Steps
+## Known issues
 
-Seven long-horizon tasks planned. Detailed specs in `plans/task-*.md`.
-See [ROADMAP.md](ROADMAP.md) for the tracking table and execution order.
+- **CI is red on `origin/main`** and 7 commits behind local — see CI/repo
+  state above. Needs a push + a fresh CI run to confirm the shell.nim
+  gating fix actually holds upstream.
+- **`talos_core` has no CI** of its own.
+- `tllm_client.nim`'s mock TCP server doesn't join cleanly on exit — cosmetic
+  ~2s hang at shutdown when run in the full batch, not test-correctness
+  affecting.
 
-### ✅ Done
+---
 
-1. **Task 1 — Agent Loop + Dispatcher** — `agent_loop.nim` moved to `talos_core`,
-   SQLite WAL + busy_timeout in `memory.nim`, dispatcher wired to real `AgentResult`.
-2. **Task 4 — Code Quality** — silent CatchableError discards logged, dead code removed,
-   OpenRouter API key warning, TODO comments updated.
-3. **Task 2 — Streaming** — SSE streaming via `chatCompletionStream` in `llm_client.nim`,
-   `streamCallback` in `AgentConfig`, token-by-token CLI output, `--no-stream` flag.
-   Discord progressive edits deferred (blocked on dimscord `--threads:on`).
-4. **Task 3 — Web UI** — `talos_agent web` subcommand, `web_server.nim` with
-   asynchttpserver, SPA with session search/listing, chat via `/api/chat`.
-   SSE streaming deferred (asynchttpserver limitation).
+## Next
 
-5. **Task 6 — Plan-Execute Mode** — `plan_executor.nim` in `talos_core`,
-   `--plan` flag on `talos_agent ask`, topological step execution with
-   dependency tracking, failure handling, and final synthesis. 35 tests.
-   Audited and fixed: removed redundant `tools` param from `generatePlan`,
-   fixed double-print in streaming mode, fixed zero token logging for
-   synthesis, added `ToolNotFoundError` guard, added real-time step
-   status display via `stepCallback`, hardened `topoSort` with `PlanError`
-   and O(1) queue.
-6. **Task 8 — Advanced TUI** — illwill-based fullscreen terminal UI with
-   scrollable transcript, streaming rendering, multi-line input with history.
-
-### Remaining (recommended order)
-
-1. **Task 5 — Vector Memory** (`plans/task-05-vector-memory.md`) — build
-   directly in the `retain`/`recall`/`reflect` shape rather than one opaque
-   memory tool (see cross-reference note at the top of that file), and
-   check the `sqlite-vec` FFI approach (`plans/research-sqlite-vec-nim-ffi.md`)
-   against the plan's brute-force cosine-similarity phase before implementing.
-2. **Task 7 — MCP Streaming** (`plans/task-07-mcp-streaming.md`) — fold in
-   URI-scheme tool addressing (`read`/`search`/`write` dispatching on URI
-   prefix, covering both local resources and MCP resources) as part of the
-   same design pass, not as a follow-on.
-
-See [ROADMAP.md](ROADMAP.md)'s "Feature Adoption Backlog" section for eight
-additional smaller items (task-11 through task-18) sourced from a 2026-07-25
-comparative review of oh-my-pi, OpenCode, and Claude Code — full rationale in
-`plans/feature-adoption-report.md`. Three of them (`/btw`, preview-edit,
-model routing) are cheap and unblocked; the rest sequence around Task 5/7 or
-are deferred.
+See [ROADMAP.md](ROADMAP.md) for the tracking table. With Phases 0–7 of the
+alpha→prod plan complete, what's left is genuinely small: reconcile CI, and
+decide whether task-10/task-14 (bang commands, checkpoints) are worth
+picking back up or formally deferring like task-12/task-15.

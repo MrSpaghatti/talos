@@ -18,7 +18,6 @@ talos_code/talos_code
 
 # Compiled Nim binaries (build artifacts)
 *.out
-test_config
 talos_agent/tests/tagent_loop
 talos_agent/tests/tcli
 talos_agent/tests/tintegration
