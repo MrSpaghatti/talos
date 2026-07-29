@@ -39,6 +39,7 @@ talos_agent/tests/test_email_config
 talos_agent/tests/test_email_tool
 talos_agent/tests/test_memory_tools
 talos_agent/scripts/eval_embeddings
+talos_agent/scripts/live_mcp_sse_test
 talos_code/src/talos_code/talos_code
 talos_code/tcode_runner
 talos_code/tests/tcode_runner
