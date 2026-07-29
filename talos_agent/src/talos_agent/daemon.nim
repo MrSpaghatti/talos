@@ -163,6 +163,7 @@ proc cmdDaemon*(
   reg.register(reflectTool(memOpts))
 
   # Delegate + MCP tools — opt-in via daemonDelegation config flag.
+  var mcpSseHandles: seq[McpServerHandle] = @[]
   if discordCfg.daemonDelegation:
     # Set agent globals so the delegate tool can initialise.
     setGlobalLLMClient(llm)
@@ -175,7 +176,12 @@ proc cmdDaemon*(
 
     reg.register(makeDelegateTool())
     if cfg.mcpServers.len > 0:
-      discard registerMcpServers(reg, cfg.mcpServers)
+      # Dispatches per server by configured transport ("sse" servers get a
+      # live SSE connection kept in sync via tool_list_changed; "http"
+      # servers behave exactly as before). mcpSseHandles is closed in the
+      # shutdown `finally` below.
+      let mcpResult = registerMcpServersWithHandles(reg, cfg.mcpServers)
+      mcpSseHandles = mcpResult.sseHandles
 
   # Open thread-mapping DB with WAL mode and busy timeout
   # to avoid SQLITE_BUSY when the memory module writes concurrently.
@@ -287,6 +293,8 @@ proc cmdDaemon*(
     return 1
   finally:
     if not daemonShutdownRequested:
+      for handle in mcpSseHandles:
+        unregisterMcpServerSse(reg, handle)
       threadDb.close()
       mem.close()
   return 0
