@@ -162,6 +162,33 @@ proc readAllAvailable(stream: Stream): string =
   except CatchableError:
     discard
 
+when defined(linux):
+  proc collectDescendants(rootPid: Pid): seq[Pid] =
+    ## Recursively walks /proc/<pid>/task/<pid>/children (Linux 3.5+) to find
+    ## every transitive descendant of `rootPid`. Process-group-independent —
+    ## unlike the pgid-based kill below, this still finds the whole tree even
+    ## when the child was never made its own process group leader (Nim
+    ## 2.0.x's stdlib silently skips that on Linux; see the comment on the
+    ## startProcess call above).
+    result = @[]
+    var frontier = @[rootPid]
+    while frontier.len > 0:
+      var next: seq[Pid] = @[]
+      for pid in frontier:
+        try:
+          let raw = readFile("/proc/" & $pid & "/task/" & $pid & "/children").strip()
+          if raw.len > 0:
+            for tok in raw.splitWhitespace():
+              try:
+                let child = Pid(parseInt(tok))
+                result.add(child)
+                next.add(child)
+              except ValueError:
+                discard
+        except IOError, OSError:
+          discard  # process already exited, or /proc entry unreadable
+      frontier = next
+
 proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
   ## Runs `cmd` via the configured shell with a timeout. Captures stdout
   ## and stderr separately. Does not consult the deny-list — see `runShell`.
@@ -250,6 +277,13 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
         let pgid = Pid(-int(process.processID))
         if kill(pgid, SIGTERM) != 0:
           discard kill(Pid(process.processID), SIGTERM)
+        when defined(linux):
+          # Belt-and-suspenders for the Nim 2.0.x/Linux gap: signal every
+          # descendant directly too, in case the pgid kill above hit an
+          # empty/wrong group.
+          let descendants = collectDescendants(Pid(process.processID))
+          for d in descendants:
+            discard kill(d, SIGTERM)
         var graceLeft = 500
         while graceLeft > 0 and process.peekExitCode() == -1:
           if not outEof: outEof = drainAvailable(process.outputHandle, outBuf, outTotal, cap)
@@ -259,6 +293,9 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
         if process.peekExitCode() == -1:
           if kill(pgid, SIGKILL) != 0:
             discard kill(Pid(process.processID), SIGKILL)
+          when defined(linux):
+            for d in descendants:
+              discard kill(d, SIGKILL)
         break
       sleep(pollIntervalMs)
       if pollIntervalMs < 100:
