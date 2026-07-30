@@ -4,9 +4,11 @@
 **Current state**: The "Alpha → Prod" plan (Phases 0–7) is complete. See
 [STATUS.md](STATUS.md) for what that verification actually consisted of
 this session — full test suite re-runs, live daemon check, CI check,
-source-level feature verification. 798 tests pass across 3 packages, 0
-failed. CI on `origin/main` is green on both Nim 2.0.x and 2.2.x matrix
-legs — the first fully clean run in the project's history.
+source-level feature verification. 802 tests pass across 3 packages, 0
+failed. CI is green on both Nim 2.0.x and 2.2.x matrix legs in **both
+repos** — `talos_core` now has its own workflow, and it caught a real
+SQLite pragma-ordering bug on its first run (fixed in v1.15.1, now the
+pinned version and the build the live daemon runs).
 
 ---
 
@@ -16,7 +18,7 @@ legs — the first fully clean run in the project's history.
 |---|---|---|
 | 0 | Land in-flight TUI sidebar/overlay work | ✅ |
 | 1 | Decouple `talos_core` from Discord (in-place) | ✅ |
-| 2 | Extract `talos_core` into its own repo | ✅ — `github.com/mrspaghatti/talos_core`, v1.14.0 |
+| 2 | Extract `talos_core` into its own repo | ✅ — `github.com/mrspaghatti/talos_core`, v1.15.1, own CI |
 | 3 | Stand up the Discord daemon for real | ✅ — live via systemd, confirmed running |
 | 4 | Ambience (proactive, personality, continuity, TUI flare, commands) | ✅ mostly — see gaps below |
 | 5 | Email + browser tools | ✅ |
@@ -62,15 +64,13 @@ Full rationale in [plans/feature-adoption-report.md](plans/feature-adoption-repo
 
 | Package | Test files | Checks | Status |
 |---------|-----------|-------|--------|
-| talos_core | 23 | 494 | ✅ 0 failed |
-| talos_agent | 23 | 271 | ✅ 0 failed |
+| talos_core | 23 | 496 | ✅ 0 failed |
+| talos_agent | 23 | 273 | ✅ 0 failed |
 | talos_code | 1 | 33 | ✅ 0 failed |
-| **Total** | **47** | **798** | **✅ 0 failed** |
+| **Total** | **47** | **802** | **✅ 0 failed** |
 
 ## ⚠️ Open items
 
-- **Give `talos_core` its own CI workflow** — it currently has none; it's
-  only ever exercised transitively via the consumer packages' CI.
 - Decide the fate of task-10 (bang commands) and task-14 (checkpoints):
   pick them back up, or formally defer them the way task-12/task-15 already
   are, instead of leaving them in limbo.
@@ -111,10 +111,16 @@ shipped in monorepo commit `e2883e3` + `talos_core` v1.14.0 (commit
    output on a stream that partially delivered).
 
 Also fixed while closing this list out: `talos_code.nimble`'s stale
-`talos_core#v1.5.0` pin (now v1.14.0). Still open whenever convenient:
-`gPendingNotes` (`advisor.nim`) and `transcript.entries`
-(`chat_tui.nim`'s TUI) both grow unbounded in long-running processes and
-want a cap/TTL.
+`talos_core#v1.5.0` pin. The two "whenever convenient" follow-ups are now
+done too (2026-07-30): `gPendingNotes` (`advisor.nim`) is an
+`OrderedTable` capped at 256 with oldest-inserted-first eviction
+(`talos_core` v1.15.0), and the TUI transcript caps at 2000 entries,
+trimming to the newest 1500 with `scrollOffset` clamped (`9517cdb`).
+Both consumers are pinned to `talos_core` v1.15.1, which also carries a
+fix for a bug the new core CI caught on its first run: `newMemory` set
+`journal_mode=WAL` before `busy_timeout`, so a concurrent open during a
+write died instantly with "database is locked". The live daemon was
+restarted onto this build 2026-07-30.
 
 ### Beyond the 5 findings: CI reconciliation
 

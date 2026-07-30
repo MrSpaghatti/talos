@@ -31,10 +31,10 @@ just built.
 
 | Package | Test files | Checks | Result |
 |---|---|---|---|
-| `talos_core` | 23 | 494 | ✅ 0 failed |
-| `talos_agent` | 23 | 271 | ✅ 0 failed |
+| `talos_core` | 23 | 496 | ✅ 0 failed |
+| `talos_agent` | 23 | 273 | ✅ 0 failed |
 | `talos_code` | 1 | 33 | ✅ 0 failed |
-| **Total** | **47** | **798** | **✅ 0 failed** |
+| **Total** | **47** | **802** | **✅ 0 failed** |
 
 Each suite was run to completion via `nimble test -y` with full,
 untruncated output inspected for `[FAILED]` — not inferred from exit code
@@ -42,11 +42,25 @@ alone.
 
 ## CI / repo state — ✅ clean
 
-- Local `main` and `origin/main` are in sync at `db39637`; nothing
-  outstanding to push.
+- Local `main` and `origin/main` are in sync at `03d9b30` (repin to
+  talos_core v1.15.1); nothing outstanding to push.
 - GitHub Actions on `origin/main` is **green on both matrix legs** (Nim
-  2.0.x and 2.2.x) — confirmed via `gh run view` on run `30514068564`, the
-  first fully clean run in the project's recorded history.
+  2.0.x and 2.2.x) — confirmed via `gh run view` on run `30517592876`
+  for `03d9b30`.
+- **`talos_core` now has its own CI** (`.github/workflows/ci.yml` in that
+  repo, same Nim 2.0.x/2.2.x matrix, deliberately no `restore-keys` cache
+  fallback after the monorepo's stale-cache poisoning). Green on both legs
+  for v1.15.1 (run `30517586141`). It earned its keep on its very first
+  run by catching a real bug: `newMemory` ran `PRAGMA journal_mode=WAL`
+  *before* setting `busy_timeout`, so a concurrent open during a write
+  failed instantly with "database is locked" — live-relevant, since the
+  daemon plus a concurrent CLI/TUI share one DB. Fixed in v1.15.1
+  (timeout set first).
+- Unbounded-growth items from the audit follow-up are closed in
+  v1.15.0 + `9517cdb`: `gPendingNotes` (`advisor.nim`) is now an
+  `OrderedTable` capped at 256 with oldest-first eviction, and the TUI
+  transcript caps at 2000 entries (trims to newest 1500, clamps
+  `scrollOffset`). Four new tests cover them.
 - Getting there took a chain of fixes, each surfaced only once the prior
   one was resolved and CI progressed further:
   1. All 5 items of the 2026-07-29 audit findings (below) — SQLite handle
@@ -70,16 +84,16 @@ alone.
   4. A missing D-Bus session bus in the GitHub runner, needed by the
      browser tool's live-Chrome tests. Fixed by wrapping the test step in
      `dbus-run-session --` (`2d90df9`).
-- `talos_core` (the new standalone repo) still has **no CI workflow of its
-  own** — it's only ever exercised transitively, via `talos_agent`/
-  `talos_code` pulling it as a dependency.
 
 ## Live deployment
 
 - systemd user unit `talos-daemon.service`: **enabled**, `Restart=always`,
   `linger` on — survives logout and crashes.
 - Confirmed running and connected this session (`systemctl --user status`):
-  bot "Raven" online, PID live, clean startup log.
+  bot "Raven" online, PID live, clean startup log. Restarted 2026-07-30
+  onto the binary rebuilt against `talos_core` v1.15.1 (picks up the
+  busy_timeout/WAL ordering fix and the gPendingNotes cap); "Connected as
+  Raven" confirmed post-restart.
 - `~/.config/talos/discord.toml` exists and is loaded.
 - `~/.local/share/talos/crash_reports/latest.log` exists with a real entry
   from 2026-07-27 — the crash-report path has actually fired once in
@@ -124,7 +138,7 @@ github.com/mrspaghatti/talos (monorepo)
 | Feature | Where | Notes |
 |---|---|---|
 | Core/Discord decoupling | `talos_core` has zero `DiscordConfig`/`dimscord` references | `ToolAcl` replaces `DiscordConfig` in `permission.nim`/`file_tool.nim` |
-| `talos_core` as standalone repo | `github.com/mrspaghatti/talos_core`, tags v1.0.0–v1.14.0 | consumed via pinned `requires` in both consumer `.nimble` files |
+| `talos_core` as standalone repo | `github.com/mrspaghatti/talos_core`, tags v1.0.0–v1.15.1, own CI green | consumed via pinned `requires` (v1.15.1) in both consumer `.nimble` files |
 | Discord daemon, live | systemd unit, confirmed running | see Live Deployment above |
 | Crash reporting | `crash_report.nim` (`RingLogger` + `writeCrashReport`) | has a real captured crash on disk |
 | Proactive heartbeat | `heartbeat.nim`, wired into daemon | interval-tick scheduler; check logic still minimal by design |
@@ -162,7 +176,6 @@ github.com/mrspaghatti/talos (monorepo)
 
 ## Known issues
 
-- **`talos_core` has no CI** of its own.
 - `tllm_client.nim`'s mock TCP server doesn't join cleanly on exit — cosmetic
   ~2s hang at shutdown when run in the full batch, not test-correctness
   affecting.
@@ -172,7 +185,8 @@ github.com/mrspaghatti/talos (monorepo)
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the tracking table. With Phases 0–7 of the
-alpha→prod plan complete and CI reconciled, what's left is genuinely small:
-give `talos_core` its own CI workflow, and decide whether task-10/task-14
-(bang commands, checkpoints) are worth picking back up or formally
-deferring like task-12/task-15.
+alpha→prod plan complete, both repos' CI green, and the prod-hardening
+items (core CI, unbounded-growth caps, v1.15.1 rollout to the live daemon)
+shipped, the only open decision is whether task-10/task-14 (bang commands,
+checkpoints) are worth picking back up or formally deferring like
+task-12/task-15.
