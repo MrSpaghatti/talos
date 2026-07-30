@@ -18,7 +18,9 @@ import talos_core/llm_client
 import talos_core/tool_registry
 import talos_core/memory
 import talos_core/agent_loop
+import talos_core/checkpoint
 import talos_core/token_counter
+import talos_agent/bang
 import talos_agent/cli
 import talos_agent/session_alias
 import talos_agent/voice
@@ -97,7 +99,9 @@ proc refreshTokenEstimate(ts: TuiState) =
     ts.tokenEstimate = 0
     return
   try:
-    ts.tokenEstimate = countMessages(getHistory(ts.mem, ts.currentSessionId), ts.llm.model)
+    # getContext, not getHistory: after a /rewind the estimate should
+    # reflect what the next LLM call will actually be sent.
+    ts.tokenEstimate = countMessages(getContext(ts.mem, ts.currentSessionId), ts.llm.model)
   except CatchableError:
     ts.tokenEstimate = 0
 
@@ -201,6 +205,7 @@ proc renderFrame(ts: TuiState) =
   ts.dirty = false
 proc runAgentTurn(ts: TuiState; userInput: string)
 proc handleSlashCommand(ts: TuiState; raw: string)
+proc runBangTurn(ts: TuiState; line: string)
 proc handleKey(ts: TuiState; key: Key) =
   ## Route keypress to the appropriate handler.
   case key
@@ -211,6 +216,8 @@ proc handleKey(ts: TuiState; key: Key) =
     if text.len > 0:
       if text.startsWith('/'):
         handleSlashCommand(ts, text)
+      elif isBangCommand(text):
+        runBangTurn(ts, text)
       else:
         runAgentTurn(ts, text)
       ts.dirty = true
@@ -377,6 +384,23 @@ proc runBtwTurn(ts: TuiState; question: string) =
   ts.updateStatus()
   ts.dirty = true
 
+proc runBangTurn(ts: TuiState; line: string) =
+  ## Runs `!<cmd>` (task-10) through the shell tool — never the LLM — and
+  ## shows the output. runBangCommand also stores it as a `[!<cmd>]`
+  ## system message in the session, so the agent sees it next turn.
+  ts.transcript.addUser(line)
+  let bangRes = runBangCommand(ts.reg, ts.mem, ts.currentSessionId,
+                               TalosSystemPrompt, line)
+  ts.currentSessionId = bangRes.sessionId
+  if bangRes.display.len > 0:
+    if bangRes.isError:
+      ts.transcript.addError(bangRes.display)
+    else:
+      ts.transcript.addSystem(bangRes.display)
+  ts.refreshTokenEstimate()
+  ts.updateStatus()
+  ts.dirty = true
+
 proc handleSlashCommand(ts: TuiState; raw: string) =
   ## Dispatches a `/`-prefixed input line as a command instead of
   ## sending it to the agent. `raw` includes the leading slash.
@@ -418,6 +442,9 @@ proc handleSlashCommand(ts: TuiState; raw: string) =
       "/info          print current provider/model/session/tokens",
       "/new           start a fresh session",
       "/btw <q>       ask with current context, without saving it",
+      "/checkpoint    mark a rewind point in this session",
+      "/rewind        collapse turns since the checkpoint into a summary",
+      "!<cmd>         run a shell command; output shown + given to the agent",
       "/quit, /exit   exit Talos",
       "PageUp/PageDn  scroll the transcript",
       "Up/Down        input history / navigate an open pane",
@@ -447,6 +474,38 @@ proc handleSlashCommand(ts: TuiState; raw: string) =
       ts.transcript.addSystem(
         "no models returned by the " & ts.cfg.provider & " endpoint's " &
         "/models list — check the endpoint is reachable")
+  of "checkpoint":
+    # Task-14: mark a point in this session's log; /rewind later collapses
+    # everything after it into one summary in the live context window.
+    if ts.currentSessionId.len == 0:
+      ts.transcript.addSystem("no active session yet — send a message first")
+    else:
+      try:
+        discard markCheckpoint(ts.mem, ts.currentSessionId)
+        ts.transcript.addSystem("checkpoint set — /rewind collapses everything after this point")
+      except CatchableError as e:
+        ts.transcript.addError("checkpoint failed: " & e.msg)
+  of "rewind":
+    if ts.currentSessionId.len == 0:
+      ts.transcript.addSystem("no active session yet — nothing to rewind")
+    else:
+      ts.statusMsg = "summarizing since checkpoint..."
+      ts.dirty = true
+      ts.renderFrame()
+      try:
+        let res = rewindToCheckpoint(ts.mem, ts.llm, ts.currentSessionId)
+        ts.transcript.addSystem(
+          "rewound: " & $res.collapsed & " messages collapsed into a summary " &
+          "(raw turns stay in history/search)")
+        ts.transcript.addSystem(CheckpointSummaryPrefix & res.summary)
+        ts.refreshTokenEstimate()
+        ts.updateStatus()
+      except CheckpointError as e:
+        ts.transcript.addSystem(e.msg & " — set one with /checkpoint")
+        ts.updateStatus()
+      except CatchableError as e:
+        ts.transcript.addError("rewind failed: " & e.msg)
+        ts.updateStatus()
   of "":
     ts.transcript.addSystem("empty command — try /help")
   else:

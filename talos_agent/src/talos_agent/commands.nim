@@ -11,6 +11,7 @@ import talos_core/memory
 import talos_core/persona
 import talos_core/plan_executor
 import talos_core/tool_registry
+import talos_agent/bang
 import talos_agent/cli
 import talos_agent/config
 import talos_agent/delegate_tool
@@ -82,6 +83,15 @@ proc runChatLoop*(
     if isExitCommand(trimmed):
       printSystemNote("bye")
       break
+    if isBangCommand(trimmed):
+      # `!<cmd>` (task-10): run it through the shell tool right here —
+      # never sent to the LLM, but stored as a [!<cmd>] system message so
+      # the agent sees what the user ran on its next turn.
+      let bangRes = runBangCommand(reg, mem, sessionId, TalosSystemPrompt, trimmed)
+      sessionId = bangRes.sessionId
+      if bangRes.display.len > 0:
+        printSystemNote(bangRes.display)
+      continue
     var res: AgentResult
     try:
       res = runOneTurn(cfg, llm, reg, mem, trimmed, streamCallback, sessionId)

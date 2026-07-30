@@ -2,7 +2,14 @@
 
 # Task 10: Bang Commands (`!<cmd>`)
 
-**Status**: 🔴 Not Started
+**Status**: ✅ Done (2026-07-30) — shipped as `talos_agent/src/talos_agent/bang.nim`
+(shared helper), wired into both the plain REPL (`commands.nim: runChatLoop`)
+and the TUI (`tui/chat_tui.nim: runBangTurn`). Differences from the sketch
+below: the helper lives in its own module (not inline in the chat loop)
+because both surfaces need it; `AgentResult.sessionId` already existed, so
+no extension was needed; and a bang command issued before any turn creates
+the session itself, seeding the system prompt first (the agent loop only
+seeds prompts into empty sessions). Tests: `tests/test_bang.nim` (10 checks).
 **Dependencies**: Task 1 (Agent Loop) — intercepts user input and stores results in memory
 **Complexity**: Small-Medium
 

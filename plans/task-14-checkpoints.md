@@ -2,7 +2,17 @@
 
 # Task 14: Checkpoints (Context Pruning with Report)
 
-**Status**: 🔴 Not Started
+**Status**: ✅ Done (2026-07-30) — shipped in `talos_core` v1.16.0
+(`memory.nim` checkpoint/override primitives + new `checkpoint.nim` with
+`rewindToCheckpoint`; `agent_loop.nim` builds context via `getContext`) and
+wired into the TUI as `/checkpoint` and `/rewind` (`tui/chat_tui.nim`).
+The "key open question" below was resolved in favor of the **persistent
+representation**: collapses are `context_overrides` rows in SQLite, so
+resuming a session after a rewind (same process or not, any surface)
+keeps the pruned view. Raw turns are never deleted — `getHistory`/
+`searchHistory` and the summary message itself stay fully searchable.
+Tests: `talos_core/tests/tcheckpoint.nim` (14 checks incl. an end-to-end
+assertion on the post-rewind LLM request body).
 **Dependencies**: Soft dependency on Task 5 (Vector Memory) — not blocking, but
 scope the checkpoint/memory boundary in the same design pass; see note below.
 **Complexity**: Medium
