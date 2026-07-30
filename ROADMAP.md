@@ -1,12 +1,12 @@
 # Talos — Project Roadmap
 
-**Last updated**: 2026-07-29
+**Last updated**: 2026-07-30
 **Current state**: The "Alpha → Prod" plan (Phases 0–7) is complete. See
 [STATUS.md](STATUS.md) for what that verification actually consisted of
 this session — full test suite re-runs, live daemon check, CI check,
-source-level feature verification. 792 tests pass across 3 packages, 0
-failed. CI on GitHub is currently red and 7 commits behind local `main` —
-not yet reconciled.
+source-level feature verification. 798 tests pass across 3 packages, 0
+failed. CI on `origin/main` is green on both Nim 2.0.x and 2.2.x matrix
+legs — the first fully clean run in the project's history.
 
 ---
 
@@ -16,7 +16,7 @@ not yet reconciled.
 |---|---|---|
 | 0 | Land in-flight TUI sidebar/overlay work | ✅ |
 | 1 | Decouple `talos_core` from Discord (in-place) | ✅ |
-| 2 | Extract `talos_core` into its own repo | ✅ — `github.com/mrspaghatti/talos_core`, v1.13.0 |
+| 2 | Extract `talos_core` into its own repo | ✅ — `github.com/mrspaghatti/talos_core`, v1.14.0 |
 | 3 | Stand up the Discord daemon for real | ✅ — live via systemd, confirmed running |
 | 4 | Ambience (proactive, personality, continuity, TUI flare, commands) | ✅ mostly — see gaps below |
 | 5 | Email + browser tools | ✅ |
@@ -62,52 +62,67 @@ Full rationale in [plans/feature-adoption-report.md](plans/feature-adoption-repo
 
 | Package | Test files | Checks | Status |
 |---------|-----------|-------|--------|
-| talos_core | 22 | 489 | ✅ 0 failed |
+| talos_core | 23 | 494 | ✅ 0 failed |
 | talos_agent | 23 | 271 | ✅ 0 failed |
-| talos_code | 1 | 32 | ✅ 0 failed |
-| **Total** | **46** | **792** | **✅ 0 failed** |
+| talos_code | 1 | 33 | ✅ 0 failed |
+| **Total** | **47** | **798** | **✅ 0 failed** |
 
 ## ⚠️ Open items
 
-- **Push the 7 local commits and get CI green on `origin/main`** — currently
-  red on the last pushed commit (a `shell.nim` ACL type-mismatch that
-  appears already fixed locally but hasn't been reconciled with GitHub).
-- **Give `talos_core` its own CI workflow** — it currently has none.
+- **Give `talos_core` its own CI workflow** — it currently has none; it's
+  only ever exercised transitively via the consumer packages' CI.
 - Decide the fate of task-10 (bang commands) and task-14 (checkpoints):
   pick them back up, or formally defer them the way task-12/task-15 already
   are, instead of leaving them in limbo.
 
-## 🩹 Audit findings (2026-07-29), ranked
+## 🩹 Audit findings (2026-07-29) — ✅ all 5 fixed
 
-Source: 7-agent scorched-earth pass, source-verified. Fix in this order:
+Source: 7-agent scorched-earth pass, source-verified. Fixed in this order,
+shipped in monorepo commit `e2883e3` + `talos_core` v1.14.0 (commit
+`b3b1b46`):
 
-1. `delegate_tool.nim:168-213` — `childMem.close()` isn't `defer`-protected;
-   an exception between `newMemory` and `close()` leaks the SQLite handle.
-   Daemon-mode repeated delegations → connection/FD exhaustion. One-line fix:
-   move `close()` into a `defer` right after `newMemory`.
-2. `mcp_client.nim:504-514` — SSE `run()` retries forever on any error, no
-   backoff, no max-retries, no HTTP timeout. A dead MCP server becomes an
-   invisible infinite loop with unbounded connection churn. Needs a
-   retry cap, backoff, and a timeout on `newAsyncHttpClient()`.
-3. `commands.nim` (551-556, 151-158, 213-218, 332-337, 486-505) — `gGlobals`
-   is mutated with no save/restore; in daemon mode an exception after the
-   setters in one Discord event poisons every subsequent event (e.g. a
-   maxed-out delegation depth or dead LLM client leaks into the next user's
-   turn).
-4. `talos_code` write/sandbox hardening — `code_tool.nim:206`'s
-   `writeFileTool` uses bare `writeFile` (no parent-dir creation, no
-   atomic temp+rename, corrupts on partial write) where `file_tool.nim`
-   already does this correctly; `talos_code.nim:109-111`'s `sandboxRoot`
-   is checked for non-empty only, not `isAbsolute`/`dirExists`, so a
-   relative root plus a CWD change can produce a real sandbox escape.
-5. LLM/stream truncation handling — `llm_client.nim:355-379` +
-   `llm_stream.nim`: a truncated/disconnected body surfaces as a
-   non-retryable `ProtocolError` instead of a retryable network error;
-   `[DONE]` is matched with exact string equality so trailing bytes after
-   it are silently dropped, losing a server-side error.
+1. ✅ `delegate_tool.nim:168-213` — `childMem.close()` wasn't
+   `defer`-protected; an exception between `newMemory` and `close()` leaked
+   the SQLite handle. Daemon-mode repeated delegations → connection/FD
+   exhaustion. Fixed: `close()` moved into a `defer` right after
+   `newMemory`.
+2. ✅ `mcp_client.nim:504-514` — SSE `run()` retried forever on any error,
+   no backoff, no max-retries, no HTTP timeout. Fixed (in `talos_core`
+   v1.14.0): connect/read timeouts via `withTimeout`, exponential backoff
+   capped at `maxReconnectDelayMs`, gives up after `maxRetries` and logs.
+3. ✅ `commands.nim` (551-556, 151-158, 213-218, 332-337, 486-505) —
+   `gGlobals` was mutated field-by-field with no save/restore; in daemon
+   mode an exception after the setters in one Discord event could poison
+   every subsequent event. Fixed: `setAgentGlobals()` in `state.nim`
+   atomically replaces `gGlobals` in one assignment; all callers
+   consolidated onto it.
+4. ✅ `talos_code` write/sandbox hardening — `code_tool.nim:206`'s
+   `writeFileTool` used bare `writeFile` (no parent-dir creation, no
+   atomic temp+rename); `talos_code.nim:109-111`'s `sandboxRoot` was
+   checked for non-empty only. Fixed: `writeFileTool` now creates missing
+   parent dirs and writes via temp-file+rename, matching `file_tool.nim`;
+   `sandboxRoot` is now validated `isAbsolute()` and `dirExists()`.
+5. ✅ LLM/stream truncation handling — `llm_client.nim:355-379` +
+   `llm_stream.nim`: a truncated/disconnected body surfaced as a
+   non-retryable `ProtocolError`. Fixed (in `talos_core` v1.14.0): the
+   EOF-without-`[DONE]` case now raises a retryable `NetworkError`;
+   `chatCompletionStream` retries with backoff, but only before the first
+   content/tool-call delta has reached the caller (to avoid duplicate
+   output on a stream that partially delivered).
 
-Also worth doing whenever convenient: `talos_code.nimble` still pins
-`talos_core#v1.5.0` (stale — everything actually resolves against
-v1.13.0, but a clean install would break on this); and `gPendingNotes`
-(`advisor.nim`) plus `transcript.entries` (`chat_tui.nim`'s TUI) both grow
-unbounded in long-running processes and want a cap/TTL.
+Also fixed while closing this list out: `talos_code.nimble`'s stale
+`talos_core#v1.5.0` pin (now v1.14.0). Still open whenever convenient:
+`gPendingNotes` (`advisor.nim`) and `transcript.entries`
+(`chat_tui.nim`'s TUI) both grow unbounded in long-running processes and
+want a cap/TTL.
+
+### Beyond the 5 findings: CI reconciliation
+
+Pushing the above surfaced a chain of four previously-hidden,
+unrelated CI failures — each only became visible once the prior one was
+fixed and CI ran further. All four are now fixed; see
+[STATUS.md](STATUS.md#ci--repo-state--clean) for the full breakdown
+(cache poisoning, a Nim-2.0.x-only process-group bug hit in two
+independent files, and a missing D-Bus session for the browser tool's
+CI tests). `origin/main` is green on both matrix legs as of commit
+`db39637`.

@@ -1,6 +1,6 @@
 # Talos — Development Status
 
-**Last updated**: 2026-07-29
+**Last updated**: 2026-07-30
 **Verification method**: every claim below was checked directly in this
 session — full test suites re-run to completion (not recalled from a
 previous run), daemon state checked via `systemctl`, CI state checked via
@@ -31,30 +31,48 @@ just built.
 
 | Package | Test files | Checks | Result |
 |---|---|---|---|
-| `talos_core` | 22 | 489 | ✅ 0 failed |
+| `talos_core` | 23 | 494 | ✅ 0 failed |
 | `talos_agent` | 23 | 271 | ✅ 0 failed |
-| `talos_code` | 1 | 32 | ✅ 0 failed |
-| **Total** | **46** | **792** | **✅ 0 failed** |
+| `talos_code` | 1 | 33 | ✅ 0 failed |
+| **Total** | **47** | **798** | **✅ 0 failed** |
 
 Each suite was run to completion via `nimble test -y` with full,
 untruncated output inspected for `[FAILED]` — not inferred from exit code
 alone.
 
-## CI / repo state — ⚠️ not currently clean
+## CI / repo state — ✅ clean
 
-- `talos_agent`/`talos_code`'s local `main` is **7 commits ahead of
-  `origin/main`**, unpushed (everything from "Task 5 vector memory" through
-  the Phase 7 backlog).
-- GitHub Actions on `origin/main` is currently **red**: the last 3 pushed
-  runs all failed, most recently a `shell.nim` type mismatch
-  (`canUseTool(callerId, "shell", acl)` resolving against the old
-  `DiscordConfig`-typed overload instead of `ToolAcl`). That specific bug
-  does not reproduce locally at current `HEAD` — the local suite's
-  gated-shell tests pass — so it looks fixed but unpushed, not actively
-  broken. Nobody has reconciled this with GitHub yet.
-- `talos_core` (the new standalone repo) has **no CI workflow at all** —
-  it's only ever exercised transitively, via `talos_agent`/`talos_code`
-  pulling it as a dependency.
+- Local `main` and `origin/main` are in sync at `db39637`; nothing
+  outstanding to push.
+- GitHub Actions on `origin/main` is **green on both matrix legs** (Nim
+  2.0.x and 2.2.x) — confirmed via `gh run view` on run `30514068564`, the
+  first fully clean run in the project's recorded history.
+- Getting there took a chain of fixes, each surfaced only once the prior
+  one was resolved and CI progressed further:
+  1. All 5 items of the 2026-07-29 audit findings (below) — SQLite handle
+     leak, unbounded MCP SSE retry, `gGlobals` mutation race, `talos_code`
+     write/sandbox hardening, stream-truncation misclassification. Shipped
+     as monorepo commit `e2883e3` + `talos_core` v1.14.0 (commit `b3b1b46`
+     in that repo).
+  2. GH Actions nimble cache poisoning: loose `restore-keys` let a
+     `.nimble`-file change (the v1.14.0 repin) inherit a stale
+     `~/.nimble` predating the `ToolAcl`/`DiscordConfig` decoupling,
+     producing a phantom compile error. Fixed by dropping the fallback
+     keys (`4519174`).
+  3. A genuine Nim-2.0.x-only bug: that series unconditionally excludes
+     Linux from `posix_spawn`, so `poDaemon`'s process-group setup
+     silently never happens there, breaking the shell tool's
+     timeout-kill. Fixed by walking `/proc/<pid>/task/<pid>/children`
+     directly instead of trusting process groups, in both
+     `talos_agent/src/tools/shell.nim` (`e087f75` was an insufficient
+     first attempt, `1cf6b7d` the working fix) and `talos_code`'s
+     independent copy in `compile.nim` (`db39637`).
+  4. A missing D-Bus session bus in the GitHub runner, needed by the
+     browser tool's live-Chrome tests. Fixed by wrapping the test step in
+     `dbus-run-session --` (`2d90df9`).
+- `talos_core` (the new standalone repo) still has **no CI workflow of its
+  own** — it's only ever exercised transitively, via `talos_agent`/
+  `talos_code` pulling it as a dependency.
 
 ## Live deployment
 
@@ -106,7 +124,7 @@ github.com/mrspaghatti/talos (monorepo)
 | Feature | Where | Notes |
 |---|---|---|
 | Core/Discord decoupling | `talos_core` has zero `DiscordConfig`/`dimscord` references | `ToolAcl` replaces `DiscordConfig` in `permission.nim`/`file_tool.nim` |
-| `talos_core` as standalone repo | `github.com/mrspaghatti/talos_core`, tags v1.0.0–v1.13.0 | consumed via pinned `requires` in both consumer `.nimble` files |
+| `talos_core` as standalone repo | `github.com/mrspaghatti/talos_core`, tags v1.0.0–v1.14.0 | consumed via pinned `requires` in both consumer `.nimble` files |
 | Discord daemon, live | systemd unit, confirmed running | see Live Deployment above |
 | Crash reporting | `crash_report.nim` (`RingLogger` + `writeCrashReport`) | has a real captured crash on disk |
 | Proactive heartbeat | `heartbeat.nim`, wired into daemon | interval-tick scheduler; check logic still minimal by design |
@@ -122,6 +140,7 @@ github.com/mrspaghatti/talos (monorepo)
 | Subagent dispatch routing (task-17) | `persona.nim: routeToDelegate` | keyword-overlap auto-routing, explicit persona still wins |
 | Advisor role (task-16) | `advisor.nim`, wired in `agent_dispatcher.nim` | reviews transcript post-turn, injects a note into the next turn only, never persisted |
 | Summarized reads (task-18) | `code_summary.nim`, `file_tool.nim` | structural summary above a line threshold; `full=true` bypasses it; `talos_code`'s own read tool deliberately untouched |
+| 2026-07-29 audit findings (5/5) | see [ROADMAP.md](ROADMAP.md) audit table | SQLite handle leak, MCP SSE retry/timeout, `gGlobals` atomic replace, `talos_code` write/sandbox hardening, stream-truncation reclassification — all fixed, tested, shipped |
 
 ### Real but partial
 
@@ -143,9 +162,6 @@ github.com/mrspaghatti/talos (monorepo)
 
 ## Known issues
 
-- **CI is red on `origin/main`** and 7 commits behind local — see CI/repo
-  state above. Needs a push + a fresh CI run to confirm the shell.nim
-  gating fix actually holds upstream.
 - **`talos_core` has no CI** of its own.
 - `tllm_client.nim`'s mock TCP server doesn't join cleanly on exit — cosmetic
   ~2s hang at shutdown when run in the full batch, not test-correctness
@@ -156,6 +172,7 @@ github.com/mrspaghatti/talos (monorepo)
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the tracking table. With Phases 0–7 of the
-alpha→prod plan complete, what's left is genuinely small: reconcile CI, and
-decide whether task-10/task-14 (bang commands, checkpoints) are worth
-picking back up or formally deferring like task-12/task-15.
+alpha→prod plan complete and CI reconciled, what's left is genuinely small:
+give `talos_core` its own CI workflow, and decide whether task-10/task-14
+(bang commands, checkpoints) are worth picking back up or formally
+deferring like task-12/task-15.
