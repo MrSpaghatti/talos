@@ -170,10 +170,17 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
   try:
     var args = @["-c", cmd]
     # poDaemon (POSIX): child becomes a process-group leader atomically at
-    # spawn (POSIX_SPAWN_SETPGROUP), so a timeout can signal the whole tree.
-    # A post-hoc setpgid() cannot do this: under posix_spawn the child has
-    # already exec'd by the time startProcess returns, so setpgid fails with
-    # EACCES and the group kill silently signals nothing.
+    # spawn via posix_spawn's POSIX_SPAWN_SETPGROUP, so a timeout can signal
+    # the whole tree with one kill(-pgid, ...) below.
+    #
+    # This only works when osproc actually uses posix_spawn. Nim's stdlib
+    # gates that behind a `useProcessAuxSpawn` const that, in the 2.0.x
+    # series, unconditionally excludes Linux (`... and not defined(linux)`)
+    # — so on Linux under Nim 2.0.x, startProcess silently falls back to a
+    # bare fork()+exec() that never touches the process group at all, and
+    # poDaemon has no effect. (Nim 2.2 relaxed this to only exclude Linux
+    # when -d:useClone is also set, so posix_spawn — and poDaemon — works
+    # there by default.) The fallback below closes that gap.
     var procOpts: set[ProcessOption] = {poUsePath, poDaemon}
     process = startProcess(
       command = opts.shellPath,
@@ -181,6 +188,17 @@ proc runShellRaw(cmd: string; opts: ShellOptions): ShellExecution =
       args = args,
       options = procOpts,
     )
+    when defined(posix):
+      # Best-effort parent-side setpgid, in case poDaemon above didn't take
+      # (Nim 2.0.x/Linux, see above). Racy in theory — POSIX fails this with
+      # EACCES once the child has exec'd — but fork() returns to us with
+      # nothing else to do first, while the child still has to load and
+      # link a new program image before it execs, so we almost always win
+      # the race in practice. When posix_spawn *did* already set the group
+      # (Nim 2.2+), the child has typically already exec'd by the time
+      # startProcess returns, so this call harmlessly fails EACCES against
+      # a pgid that was already correct.
+      discard setpgid(Pid(process.processID), Pid(process.processID))
   except OSError as e:
     return ShellExecution(
       stdout: "",
