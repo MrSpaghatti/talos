@@ -31,10 +31,10 @@ just built.
 
 | Package | Test files | Checks | Result |
 |---|---|---|---|
-| `talos_core` | 23 | 496 | ✅ 0 failed |
-| `talos_agent` | 23 | 273 | ✅ 0 failed |
+| `talos_core` | 24 | 510 | ✅ 0 failed |
+| `talos_agent` | 24 | 283 | ✅ 0 failed |
 | `talos_code` | 1 | 33 | ✅ 0 failed |
-| **Total** | **47** | **802** | **✅ 0 failed** |
+| **Total** | **49** | **826** | **✅ 0 failed** |
 
 Each suite was run to completion via `nimble test -y` with full,
 untruncated output inspected for `[FAILED]` — not inferred from exit code
@@ -42,15 +42,15 @@ alone.
 
 ## CI / repo state — ✅ clean
 
-- Local `main` and `origin/main` are in sync at `03d9b30` (repin to
-  talos_core v1.15.1); nothing outstanding to push.
+- Local `main` and `origin/main` are in sync at `5f8dae2` (task-10 +
+  task-14 ship, repin to talos_core v1.16.0); nothing outstanding to push.
 - GitHub Actions on `origin/main` is **green on both matrix legs** (Nim
-  2.0.x and 2.2.x) — confirmed via `gh run view` on run `30517592876`
-  for `03d9b30`.
-- **`talos_core` now has its own CI** (`.github/workflows/ci.yml` in that
+  2.0.x and 2.2.x) — confirmed via `gh run watch --exit-status` on run
+  `30518783589` for `5f8dae2`.
+- **`talos_core` has its own CI** (`.github/workflows/ci.yml` in that
   repo, same Nim 2.0.x/2.2.x matrix, deliberately no `restore-keys` cache
   fallback after the monorepo's stale-cache poisoning). Green on both legs
-  for v1.15.1 (run `30517586141`). It earned its keep on its very first
+  for v1.16.0 (run `30518496560`). It earned its keep on its very first
   run by catching a real bug: `newMemory` ran `PRAGMA journal_mode=WAL`
   *before* setting `busy_timeout`, so a concurrent open during a write
   failed instantly with "database is locked" — live-relevant, since the
@@ -90,10 +90,13 @@ alone.
 - systemd user unit `talos-daemon.service`: **enabled**, `Restart=always`,
   `linger` on — survives logout and crashes.
 - Confirmed running and connected this session (`systemctl --user status`):
-  bot "Raven" online, PID live, clean startup log. Restarted 2026-07-30
-  onto the binary rebuilt against `talos_core` v1.15.1 (picks up the
-  busy_timeout/WAL ordering fix and the gPendingNotes cap); "Connected as
-  Raven" confirmed post-restart.
+  bot "Raven" online, PID live, clean startup log. Restarted twice on
+  2026-07-30: first onto the `talos_core` v1.15.1 build
+  (busy_timeout/WAL ordering fix, gPendingNotes cap), then onto the
+  v1.16.0 build after task-10/task-14 shipped — a deliberate restart,
+  since `nimble build` had replaced the unit's ExecStart binary in place
+  and `Restart=always` would otherwise have swapped builds silently on
+  the next crash. "Connected as Raven" confirmed after both.
 - `~/.config/talos/discord.toml` exists and is loaded.
 - `~/.local/share/talos/crash_reports/latest.log` exists with a real entry
   from 2026-07-27 — the crash-report path has actually fired once in
@@ -138,7 +141,7 @@ github.com/mrspaghatti/talos (monorepo)
 | Feature | Where | Notes |
 |---|---|---|
 | Core/Discord decoupling | `talos_core` has zero `DiscordConfig`/`dimscord` references | `ToolAcl` replaces `DiscordConfig` in `permission.nim`/`file_tool.nim` |
-| `talos_core` as standalone repo | `github.com/mrspaghatti/talos_core`, tags v1.0.0–v1.15.1, own CI green | consumed via pinned `requires` (v1.15.1) in both consumer `.nimble` files |
+| `talos_core` as standalone repo | `github.com/mrspaghatti/talos_core`, tags v1.0.0–v1.16.0, own CI green | consumed via pinned `requires` (v1.16.0) in both consumer `.nimble` files |
 | Discord daemon, live | systemd unit, confirmed running | see Live Deployment above |
 | Crash reporting | `crash_report.nim` (`RingLogger` + `writeCrashReport`) | has a real captured crash on disk |
 | Proactive heartbeat | `heartbeat.nim`, wired into daemon | interval-tick scheduler; check logic still minimal by design |
@@ -154,22 +157,22 @@ github.com/mrspaghatti/talos (monorepo)
 | Subagent dispatch routing (task-17) | `persona.nim: routeToDelegate` | keyword-overlap auto-routing, explicit persona still wins |
 | Advisor role (task-16) | `advisor.nim`, wired in `agent_dispatcher.nim` | reviews transcript post-turn, injects a note into the next turn only, never persisted |
 | Summarized reads (task-18) | `code_summary.nim`, `file_tool.nim` | structural summary above a line threshold; `full=true` bypasses it; `talos_code`'s own read tool deliberately untouched |
+| Bang commands (task-10) | `bang.nim`, wired into `commands.nim: runChatLoop` + `tui/chat_tui.nim: runBangTurn` | `!<cmd>` runs via the shell tool (deny-list + timeout inherited), output shown and stored as a `[!<cmd>]` system message the agent sees next turn; REPL + TUI, deliberately not Discord |
+| Checkpoints / context pruning (task-14) | `talos_core` v1.16.0: `memory.nim` + `checkpoint.nim`; TUI `/checkpoint` `/rewind` | rewind collapses turns since the checkpoint behind a one-LLM-call summary; persistent (`context_overrides` in SQLite) so resumes keep the pruned view; raw turns never deleted, still in history/FTS |
 | 2026-07-29 audit findings (5/5) | see [ROADMAP.md](ROADMAP.md) audit table | SQLite handle leak, MCP SSE retry/timeout, `gGlobals` atomic replace, `talos_code` write/sandbox hardening, stream-truncation reclassification — all fixed, tested, shipped |
 
 ### Real but partial
 
 | Feature | Gap |
 |---|---|
-| Slash commands (task-09) | Works in the TUI (`/help /new /session /model /info /btw /quit`) via an inline `handleSlashCommand` in `chat_tui.nim` — but the dedicated `slash_commands.nim` module the original spec called for was never split out, and none of this exists outside the TUI. |
+| Slash commands (task-09) | Works in the TUI (`/help /new /session /model /info /btw /checkpoint /rewind /quit`) via an inline `handleSlashCommand` in `chat_tui.nim` — but the dedicated `slash_commands.nim` module the original spec called for was never split out, and none of this exists outside the TUI. |
 | URI-scheme tool addressing | Recommended as part of Task 7's design (`read://`/`search://`/`write://`-style prefix dispatch unifying MCP and local tools) — the core SSE streaming work landed, this specific unification did not. |
 
 ### Not done
 
 | Item | Status |
 |---|---|
-| Bang commands, `!<cmd>` shell interception in CLI/TUI (task-10) | No interceptor found in `commands.nim`/`cli.nim`. (Discord's separate `!status`/`!config`/`!admin`/`!session` prefix commands are unrelated and *are* implemented.) |
 | Preview-then-accept edit workflow (task-12) | Deliberately deferred — `talos_code`-specific, out of scope for this plan. |
-| Checkpoints / context pruning (task-14) | **Not implemented** — no checkpoint/rewind concept anywhere in `memory.nim`, `agent_loop.nim`, or the CLI. This was previously tracked as done alongside `/btw`; that was incorrect — only `/btw` shipped. |
 | Session branching, `/tree` (task-15) | Deliberately deferred — no concrete need yet. |
 
 ---
@@ -185,8 +188,8 @@ github.com/mrspaghatti/talos (monorepo)
 ## Next
 
 See [ROADMAP.md](ROADMAP.md) for the tracking table. With Phases 0–7 of the
-alpha→prod plan complete, both repos' CI green, and the prod-hardening
-items (core CI, unbounded-growth caps, v1.15.1 rollout to the live daemon)
-shipped, the only open decision is whether task-10/task-14 (bang commands,
-checkpoints) are worth picking back up or formally deferring like
-task-12/task-15.
+alpha→prod plan complete, both repos' CI green, the prod-hardening items
+shipped, and task-10/task-14 (bang commands, checkpoints) landed 2026-07-30
+with `talos_core` v1.16.0, the feature-adoption backlog is closed — every
+item is done or deliberately deferred (task-12, task-15, URI-scheme tool
+addressing). Nothing is currently open.

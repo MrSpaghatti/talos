@@ -4,11 +4,12 @@
 **Current state**: The "Alpha → Prod" plan (Phases 0–7) is complete. See
 [STATUS.md](STATUS.md) for what that verification actually consisted of
 this session — full test suite re-runs, live daemon check, CI check,
-source-level feature verification. 802 tests pass across 3 packages, 0
+source-level feature verification. 826 tests pass across 3 packages, 0
 failed. CI is green on both Nim 2.0.x and 2.2.x matrix legs in **both
-repos** — `talos_core` now has its own workflow, and it caught a real
-SQLite pragma-ordering bug on its first run (fixed in v1.15.1, now the
-pinned version and the build the live daemon runs).
+repos**. The feature-adoption backlog is now fully closed: every item is
+either done or deliberately deferred — the last two stragglers, task-10
+(bang commands) and task-14 (checkpoints), shipped 2026-07-30 with
+`talos_core` v1.16.0.
 
 ---
 
@@ -18,7 +19,7 @@ pinned version and the build the live daemon runs).
 |---|---|---|
 | 0 | Land in-flight TUI sidebar/overlay work | ✅ |
 | 1 | Decouple `talos_core` from Discord (in-place) | ✅ |
-| 2 | Extract `talos_core` into its own repo | ✅ — `github.com/mrspaghatti/talos_core`, v1.15.1, own CI |
+| 2 | Extract `talos_core` into its own repo | ✅ — `github.com/mrspaghatti/talos_core`, v1.16.0, own CI |
 | 3 | Stand up the Discord daemon for real | ✅ — live via systemd, confirmed running |
 | 4 | Ambience (proactive, personality, continuity, TUI flare, commands) | ✅ mostly — see gaps below |
 | 5 | Email + browser tools | ✅ |
@@ -49,12 +50,12 @@ Full rationale in [plans/feature-adoption-report.md](plans/feature-adoption-repo
 | # | Item | Task file | Status |
 |---|------|-----------|--------|
 | 9 | Slash commands | [task-09](plans/task-09-slash-commands.md) | 🟡 Partial — real, working, but ad hoc inside `chat_tui.nim` (not the standalone module the spec called for), TUI-only |
-| 10 | Bang commands (`!<cmd>`) | [task-10](plans/task-10-bang-commands.md) | 🔴 Not started |
+| 10 | Bang commands (`!<cmd>`) | [task-10](plans/task-10-bang-commands.md) | ✅ Done (2026-07-30) — `bang.nim` shared by REPL + TUI; output stored as `[!cmd]` system message |
 | 11 | `/btw` ephemeral side-question | [task-11](plans/task-11-btw-command.md) | ✅ Done — TUI only, not Discord/CLI `ask` |
 | 12 | Preview-then-accept edit workflow | [task-12](plans/task-12-preview-edit.md) | ⏸️ Deferred — `talos_code`-specific, out of scope |
 | 13 | Role-based model routing | [task-13](plans/task-13-model-routing.md) | ✅ Done |
 | — | URI schemes as tool interface | folded into [task-07](plans/task-07-mcp-streaming.md) | 🔴 Not done — SSE streaming (task-07's core) shipped, this unification did not |
-| 14 | Checkpoints (context pruning) | [task-14](plans/task-14-checkpoints.md) | 🔴 **Not done** — previously mis-tracked as complete alongside `/btw`; verified absent from `memory.nim`/`agent_loop.nim`/CLI this session |
+| 14 | Checkpoints (context pruning) | [task-14](plans/task-14-checkpoints.md) | ✅ Done (2026-07-30) — `talos_core` v1.16.0 (`checkpoint.nim`, persistent `context_overrides`), TUI `/checkpoint` + `/rewind`. (Was previously mis-tracked as done once before, when only `/btw` had shipped — this time it's source- and test-verified: `tcheckpoint.nim` asserts the post-rewind LLM request body.) |
 | 15 | Session branching (`/tree`) | [task-15](plans/task-15-session-branching.md) | ⏸️ Deferred — no concrete need yet |
 | 16 | Advisor role | [task-16](plans/task-16-advisor-role.md) | ✅ Done |
 | 17 | Subagent dispatch routing | [task-17](plans/task-17-subagent-dispatch.md) | ✅ Done |
@@ -64,16 +65,16 @@ Full rationale in [plans/feature-adoption-report.md](plans/feature-adoption-repo
 
 | Package | Test files | Checks | Status |
 |---------|-----------|-------|--------|
-| talos_core | 23 | 496 | ✅ 0 failed |
-| talos_agent | 23 | 273 | ✅ 0 failed |
+| talos_core | 24 | 510 | ✅ 0 failed |
+| talos_agent | 24 | 283 | ✅ 0 failed |
 | talos_code | 1 | 33 | ✅ 0 failed |
-| **Total** | **47** | **802** | **✅ 0 failed** |
+| **Total** | **49** | **826** | **✅ 0 failed** |
 
 ## ⚠️ Open items
 
-- Decide the fate of task-10 (bang commands) and task-14 (checkpoints):
-  pick them back up, or formally defer them the way task-12/task-15 already
-  are, instead of leaving them in limbo.
+- None. task-10 and task-14 shipped 2026-07-30; task-12 (preview-edit) and
+  task-15 (session branching) remain deliberately deferred, and the URI-scheme
+  tool-addressing unification from task-07's design remains not-done by choice.
 
 ## 🩹 Audit findings (2026-07-29) — ✅ all 5 fixed
 
@@ -116,11 +117,13 @@ done too (2026-07-30): `gPendingNotes` (`advisor.nim`) is an
 `OrderedTable` capped at 256 with oldest-inserted-first eviction
 (`talos_core` v1.15.0), and the TUI transcript caps at 2000 entries,
 trimming to the newest 1500 with `scrollOffset` clamped (`9517cdb`).
-Both consumers are pinned to `talos_core` v1.15.1, which also carries a
-fix for a bug the new core CI caught on its first run: `newMemory` set
-`journal_mode=WAL` before `busy_timeout`, so a concurrent open during a
-write died instantly with "database is locked". The live daemon was
-restarted onto this build 2026-07-30.
+Both consumers are now pinned to `talos_core` v1.16.0 (checkpoints).
+v1.15.1 carried a fix for a bug the new core CI caught on its first run:
+`newMemory` set `journal_mode=WAL` before `busy_timeout`, so a concurrent
+open during a write died instantly with "database is locked". The live
+daemon was restarted onto the v1.15.1 build 2026-07-30; it does not need
+a restart for v1.16.0 unless checkpoint support in daemon surfaces is
+wanted (checkpoints are currently REPL/TUI-only).
 
 ### Beyond the 5 findings: CI reconciliation
 
