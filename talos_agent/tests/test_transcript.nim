@@ -69,6 +69,29 @@ suite "TranscriptRegion: scrolling":
     r.scrollDown(3)
     check r.autoScroll == true
 
+suite "TranscriptRegion: cap":
+  test "entries are trimmed to KeepTranscriptEntries once past the cap":
+    var r = newTranscriptRegion(80)
+    for i in 0 .. MaxTranscriptEntries:  # one past the cap
+      r.addUser("msg " & $i)
+    check r.entries.len < MaxTranscriptEntries
+    # The survivors are the newest entries, oldest dropped.
+    check r.entries[^1].content == "msg " & $MaxTranscriptEntries
+    check r.entries[0].content != "msg 0"
+
+  test "trim clamps a scroll offset pointing above the surviving content":
+    var r = newTranscriptRegion(80)
+    for i in 0 ..< MaxTranscriptEntries:
+      r.addUser("msg " & $i)
+    r.scrollUp(999_999)  # clamped to totalLines - 1, i.e. the very top
+    r.addUser("overflow")  # triggers the trim
+    # scrollOffset must not exceed what remains, or render goes blank.
+    r.scrollUp(0)  # re-clamp path; offset must already be in range
+    check r.scrollOffset >= 0
+    var tb = newTerminalBuffer(80, 10)
+    r.render(tb, defaultTheme(), 0, 10)
+    check rowText(tb, 0, 80).strip().len > 0
+
 suite "TranscriptRegion: render":
   test "user messages are prefixed with '> '":
     var r = newTranscriptRegion(80)

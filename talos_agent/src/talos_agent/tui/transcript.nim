@@ -66,9 +66,25 @@ proc totalLines(region: TranscriptRegion): int =
   for e in region.entries:
     result += entryLines(e, region.wrapWidth).len
 
+const
+  MaxTranscriptEntries* = 2000
+    ## The TUI can run for days in one session; without a cap the
+    ## transcript grows without bound (and totalLines re-wraps every entry
+    ## per render, so it gets slower as it grows, too). Only the visible
+    ## history is dropped — the session store keeps everything.
+  KeepTranscriptEntries = 1500
+    ## Trim to well below the cap so the O(n) drop happens once per ~500
+    ## messages instead of on every addMessage at the boundary.
+
 proc addMessage*(region: var TranscriptRegion; role: MessageRole;
                  content: string; detail: string = "") =
   region.entries.add(TranscriptEntry(role: role, content: content, detail: detail))
+  if region.entries.len > MaxTranscriptEntries:
+    region.entries = region.entries[^KeepTranscriptEntries .. ^1]
+    # If the user was scrolled up past what survived the trim, the view
+    # would otherwise be pinned above the remaining content (blank screen
+    # until they scroll back down).
+    region.scrollOffset = min(region.scrollOffset, max(totalLines(region) - 1, 0))
   region.dirty = true
 
 proc addUser*(region: var TranscriptRegion; content: string) =
