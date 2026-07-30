@@ -10,7 +10,7 @@
 ##   1. Validate the command is within `sandboxRoot` before calling.
 ##   2. Use the shell tool's deny-list for command-level safety.
 
-import std/[osproc, times, monotimes, os]
+import std/[osproc, times, monotimes, os, strutils]
 when defined(posix):
   import std/posix
 else:
@@ -20,6 +20,35 @@ import code_runner
 import talos_core/posix_io
 
 const DefaultCompileTimeoutMs = 120_000
+
+when defined(linux):
+  proc collectDescendants(rootPid: Pid): seq[Pid] =
+    ## Recursively walks /proc/<pid>/task/<pid>/children (Linux 3.5+) to find
+    ## every transitive descendant of `rootPid`. Process-group-independent —
+    ## unlike the pgid-based kill below, this still finds the whole tree even
+    ## when the child was never made its own process group leader. Nim's
+    ## stdlib only uses posix_spawn (and therefore honors poDaemon) on Linux
+    ## when NOT built with -d:useClone under Nim 2.2+; on the 2.0.x series it
+    ## unconditionally falls back to a bare fork()+exec() on Linux that never
+    ## sets up a process group at all, silently breaking the pgid kill below.
+    result = @[]
+    var frontier = @[rootPid]
+    while frontier.len > 0:
+      var next: seq[Pid] = @[]
+      for pid in frontier:
+        try:
+          let raw = readFile("/proc/" & $pid & "/task/" & $pid & "/children").strip()
+          if raw.len > 0:
+            for tok in raw.splitWhitespace():
+              try:
+                let child = Pid(parseInt(tok))
+                result.add(child)
+                next.add(child)
+              except ValueError:
+                discard
+        except IOError, OSError:
+          discard  # process already exited, or /proc entry unreadable
+      frontier = next
 
 proc runCompile*(
     cmd: string;
@@ -93,6 +122,13 @@ proc runCompile*(
         let pgid = Pid(-int(p.processID))
         if kill(pgid, SIGTERM) != 0:
           discard kill(Pid(p.processID), SIGTERM)
+        when defined(linux):
+          # Belt-and-suspenders for the Nim 2.0.x/Linux gap noted above:
+          # signal every descendant directly too, in case the pgid kill
+          # hit an empty/wrong group.
+          let descendants = collectDescendants(Pid(p.processID))
+          for d in descendants:
+            discard kill(d, SIGTERM)
         var grace = 500
         while grace > 0 and p.peekExitCode() == -1:
           if not eof: eof = drainAvailable(p.outputHandle, outBuf, outTotal, maxOutputBytes)
@@ -101,6 +137,9 @@ proc runCompile*(
         if p.peekExitCode() == -1:
           if kill(pgid, SIGKILL) != 0:
             discard kill(Pid(p.processID), SIGKILL)
+          when defined(linux):
+            for d in descendants:
+              discard kill(d, SIGKILL)
         break
       sleep(pollIntervalMs)
       if pollIntervalMs < 100:
