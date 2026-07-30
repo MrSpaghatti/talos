@@ -173,11 +173,8 @@ proc cmdDaemon*(
   var mcpSseHandles: seq[McpServerHandle] = @[]
   if discordCfg.daemonDelegation:
     # Set agent globals so the delegate tool can initialise.
-    setGlobalLLMClient(llm)
-    setTalosConfig(cfg)
-    setToolAcl(toToolAcl(discordCfg))
-    setPersonaRegistry(pReg)
-    setDelegationConfig(defaultDelegationConfig())
+    setAgentGlobals(llm, cfg, pReg, defaultDelegationConfig(),
+                    toolAcl = toToolAcl(discordCfg))
 
     reg.register(makeDelegateTool())
     if cfg.mcpServers.len > 0:

@@ -150,12 +150,9 @@ proc cmdChat*(
   let llm = buildLLMClient(cfg)
 
   # Set agent globals so delegate tool can work from this flow.
-  setGlobalLLMClient(llm)
-  setTalosConfig(cfg)
   let personasPath = defaultPersonasPath()
   let pReg = loadPersonasSafe(personasPath)
-  setPersonaRegistry(pReg)
-  setDelegationConfig(defaultDelegationConfig())
+  setAgentGlobals(llm, cfg, pReg, defaultDelegationConfig())
 
   let reg = buildRegistry(cfg)
   var mem = openMemory(cfg)
@@ -210,12 +207,9 @@ proc cmdAsk*(
   let llm = buildLLMClient(cfg)
 
   # Set agent globals so delegate tool can work from this flow.
-  setGlobalLLMClient(llm)
-  setTalosConfig(cfg)
   let personasPath = defaultPersonasPath()
   let pReg = loadPersonasSafe(personasPath)
-  setPersonaRegistry(pReg)
-  setDelegationConfig(defaultDelegationConfig())
+  setAgentGlobals(llm, cfg, pReg, defaultDelegationConfig())
 
   let reg = buildRegistry(cfg)
   var mem = openMemory(cfg)
@@ -329,12 +323,9 @@ proc cmdSession*(
   let llm = buildLLMClient(cfg)
 
   # Set agent globals so delegate tool can work from this flow.
-  setGlobalLLMClient(llm)
-  setTalosConfig(cfg)
   let personasPath = defaultPersonasPath()
   let pReg = loadPersonasSafe(personasPath)
-  setPersonaRegistry(pReg)
-  setDelegationConfig(defaultDelegationConfig())
+  setAgentGlobals(llm, cfg, pReg, defaultDelegationConfig())
 
   let reg = buildRegistry(cfg)
   var mem = openMemory(cfg)
@@ -482,11 +473,6 @@ proc cmdRunPersona*(
   var mem = openMemory(cfg)
   defer: mem.close()
 
-  # Set agent globals so the delegate tool can work
-  setGlobalLLMClient(llm)
-  setPersonaRegistry(reg)
-  setTalosConfig(cfg)
-
   # Build child agent config (must happen before registries so delegation
   # bounds are available when the delegate tool is wired).
   let pc = reg.getPersona(personaName)
@@ -502,7 +488,9 @@ proc cmdRunPersona*(
     pc.name,
   )
   agentCfg.delegation = dc
-  setDelegationConfig(dc)
+
+  # Set agent globals so the delegate tool can work
+  setAgentGlobals(llm, cfg, reg, dc)
 
   # Build filtered registry scoped to the persona
   var baseReg = newToolRegistry()
@@ -548,12 +536,9 @@ proc cmdWeb*(
   let llm = buildLLMClient(cfg)
 
   # Set agent globals so delegate tool can work.
-  setGlobalLLMClient(llm)
-  setTalosConfig(cfg)
   let personasPath = defaultPersonasPath()
   let pReg = loadPersonasSafe(personasPath)
-  setPersonaRegistry(pReg)
-  setDelegationConfig(defaultDelegationConfig())
+  setAgentGlobals(llm, cfg, pReg, defaultDelegationConfig())
 
   let reg = buildRegistry(cfg)
   var mem = openMemory(cfg)

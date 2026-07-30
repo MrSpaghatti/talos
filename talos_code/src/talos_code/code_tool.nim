@@ -202,13 +202,50 @@ proc writeFileTool*(cfg: CodingHarnessConfig): Tool =
                 allowed.join(", "),
         isError: true,
       )
+    let parent = parentDir(path)
+    if parent.len > 0 and not dirExists(parent):
+      try:
+        createDir(parent)
+      except CatchableError as e:
+        return ToolResult(
+          output: "failed to create parent directory: " & e.msg,
+          isError: true,
+          exitCode: 1,
+        )
+    # Write to a temp file and rename into place — matches file_tool.nim's
+    # fileWriteTool. A bare writeFile() truncates the target immediately,
+    # so a crash or disk-full error mid-write corrupts it in place; the
+    # temp+rename here leaves the original file untouched until the new
+    # content is fully on disk.
+    let tempPath = path & ".tmp"
     try:
-      writeFile(path, content)
+      writeFile(tempPath, content)
+    except CatchableError as e:
+      return ToolResult(
+        output: "failed to write file: " & e.msg,
+        isError: true,
+        exitCode: 1,
+      )
+    try:
+      moveFile(tempPath, path)
       return ToolResult(
         output: "file written: " & path & " (" & $content.len & " bytes)",
         isError: false,
       )
     except CatchableError as e:
+      if fileExists(tempPath):
+        try: removeFile(tempPath) except CatchableError: discard
+      return ToolResult(
+        output: "failed to write file: " & e.msg,
+        isError: true,
+        exitCode: 1,
+      )
+    # Nim 2.2.x with -d:ssl may flag moveFile as raising Exception transitively.
+    # Catch as a safety net even though this should never trigger (same
+    # footgun documented on fileWriteTool's moveFile call in file_tool.nim).
+    except Exception as e:
+      if fileExists(tempPath):
+        try: removeFile(tempPath) except CatchableError: discard
       return ToolResult(
         output: "failed to write file: " & e.msg,
         isError: true,

@@ -248,6 +248,15 @@ suite "code_tool sandbox enforcement":
     check: not res.isError
     check: readFile(p) == "written"
 
+  test "write creates missing parent directories and leaves no stray .tmp file":
+    let p = sandbox / "nested" / "deeper" / "out.nim"
+    defer: removeDir(sandbox / "nested")
+    let t = writeFileTool(cfg)
+    let res = t.execute(%*{"path": p, "content": "nested write"})
+    check: not res.isError
+    check: readFile(p) == "nested write"
+    check: not fileExists(p & ".tmp")
+
   test "sibling directory sharing the sandbox prefix cannot escape":
     let sibling = sandbox & "-evil"
     createDir(sibling)

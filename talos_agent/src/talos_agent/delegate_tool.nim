@@ -172,6 +172,7 @@ proc makeDelegateExecuteProc*(): auto =
         isError: true,
         exitCode: 1,
       )
+    defer: childMem.close()
     # Consume one delegation slot before spawning the child.
     captured.delegationConfig.useDelegationSlot()
 
@@ -211,7 +212,6 @@ proc makeDelegateExecuteProc*(): auto =
       memory = childMem,
       userInput = task,
     )
-    childMem.close()
     var lines: seq[string] = @[]
     lines.add("=== Child Agent Result ===")
     lines.add("Persona: " & persona.name)

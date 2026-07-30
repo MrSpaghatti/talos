@@ -61,6 +61,31 @@ proc setToolAcl*(acl: ToolAcl) =
   else:
     gGlobals.toolAcl = acl
 
+proc setAgentGlobals*(
+    llm: LLMClient;
+    cfg: TalosConfig;
+    personaRegistry: PersonaRegistry;
+    delegationConfig: DelegationConfig;
+    toolAcl: ToolAcl = ToolAcl();
+) =
+  ## Initializes gGlobals for a request-serving surface (CLI command, web
+  ## server, daemon) in a single atomic assignment, rather than the
+  ## individual `set*` procs above called back-to-back. Those mutate
+  ## gGlobals field-by-field, so an exception partway through the sequence
+  ## (e.g. `setGlobalLLMClient` lands but a later `loadPersonasSafe`/
+  ## `setPersonaRegistry` throws) leaves gGlobals half-configured for
+  ## whatever the process does next — a real risk for any long-lived
+  ## surface (daemon, web server, interactive chat loop), not just a
+  ## theoretical one. Building the whole object before ever touching
+  ## gGlobals means it's either untouched or fully replaced, never partial.
+  gGlobals = AgentGlobals(
+    llmClient: llm,
+    talosConfig: cfg,
+    personaRegistry: personaRegistry,
+    delegationConfig: delegationConfig,
+    toolAcl: toolAcl,
+  )
+
 proc resetDelegationBudget*() {.gcsafe, raises: [].} =
   ## Restores the delegation budget to its configured baseline. Must be
   ## called at the start of every top-level request/turn (daemon message,

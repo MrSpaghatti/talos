@@ -56,7 +56,7 @@ proc showHelp =
 # Main
 # ---------------------------------------------------------------------------
 
-when isMainModule:
+proc main*() =
   let p = paramCount()
   if p >= 1 and paramStr(1) == "--help":
     showHelp()
@@ -109,6 +109,20 @@ when isMainModule:
   if harnessCfg.sandboxRoot.len == 0:
     echo "Error: TALOS_SANDBOX_ROOT must be set to an absolute directory path."
     quit 1
+  if not isAbsolute(harnessCfg.sandboxRoot):
+    # withinSandbox() (code_tool.nim) resolves both the sandbox root and
+    # every checked path relative to the process's current directory at
+    # check time. A relative root would still pass the check above, but a
+    # later `setCurrentDir` (e.g. from a build/test command) would shift
+    # what it resolves to, turning a supposed sandbox boundary into a
+    # moving target — a real escape, not just a validation nicety.
+    echo "Error: TALOS_SANDBOX_ROOT must be an absolute path, got '" &
+      harnessCfg.sandboxRoot & "'."
+    quit 1
+  if not dirExists(harnessCfg.sandboxRoot):
+    echo "Error: TALOS_SANDBOX_ROOT does not exist or is not a directory: '" &
+      harnessCfg.sandboxRoot & "'."
+    quit 1
 
   echo "Starting coding task: ", task
   let result = runAgentLoop(agentCfg, llm, registry, mem, task)
@@ -116,3 +130,6 @@ when isMainModule:
   echo "\nStats: ", result.stats.totalTurns, " turns, ",
         result.stats.toolCallsMade, " tool calls, ",
         result.stats.totalTokens, " tokens"
+
+when isMainModule:
+  main()
