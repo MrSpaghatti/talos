@@ -44,7 +44,11 @@ jobs:
 
       - name: Test agent
         working-directory: talos_agent
-        run: nimble test -y
+        # dbus-run-session: the runner has no session bus, and the browser
+        # tool's live-Chrome tests fail to launch without one (Chrome's
+        # dbus/bus.cc errors immediately, and the cdp launcher treats any
+        # stray stderr line before "DevTools listening" as a fatal error).
+        run: dbus-run-session -- nimble test -y
         env:
           CI: "true"
 
