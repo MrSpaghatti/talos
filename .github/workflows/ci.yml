@@ -37,9 +37,6 @@ jobs:
         with:
           path: ~/.nimble
           key: nimble-${{ matrix.nim-version }}-${{ hashFiles('**/*.nimble') }}
-          restore-keys: |
-            nimble-${{ matrix.nim-version }}-
-            nimble-
 
       - name: Build agent
         working-directory: talos_agent
